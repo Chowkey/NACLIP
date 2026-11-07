@@ -16,6 +16,10 @@ This repository contains the code for our **WACV 2025** paper, [Pay Attention to
 
 ### &#x1F4E6; Requirements
 
+For local Ubuntu development with GPU execution on Google Colab, see
+[the Colab workflow](COLAB.md). It includes command-line source upload, remote
+dependency setup, and inference/evaluation commands for users and coding agents.
+
 To run NACLIP, please install the following packages. We used `Python 3.9` in our experiments.
 
 ```
