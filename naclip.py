@@ -19,7 +19,9 @@ sys.path.append("..")
 class NACLIP(BaseSegmentor):
     def __init__(self, clip_path, name_path, device=torch.device('cuda'),
                  arch='reduced', attn_strategy='naclip', gaussian_std=5., pamr_steps=10, pamr_stride=(8, 16),
-                 prob_thd=0.0, logit_scale=40, slide_stride=112, slide_crop=224):
+                 prob_thd=0.0, logit_scale=40, slide_stride=112, slide_crop=224,
+                 spatial_bias='fixed', guidance_tau=0.0, guidance_temperature=1.0,
+                 guidance_epsilon=1e-6):
 
         data_preprocessor = SegDataPreProcessor(mean=[122.771, 116.746, 104.094], std=[68.501, 66.632, 70.323], rgb_to_bgr=True)
         super().__init__(data_preprocessor=data_preprocessor)
@@ -41,7 +43,9 @@ class NACLIP(BaseSegmentor):
         self.query_features = torch.cat(query_features, dim=0)
 
         self.dtype = self.query_features.dtype
-        self.net.visual.set_params(arch, attn_strategy, gaussian_std)
+        self.net.visual.set_params(arch, attn_strategy, gaussian_std, spatial_bias,
+                                   guidance_tau, guidance_temperature, guidance_epsilon)
+        self.net.requires_grad_(False)
         self.logit_scale = logit_scale
         self.prob_thd = prob_thd
         self.slide_stride = slide_stride

@@ -1,5 +1,13 @@
 # Working on NACLIP
 
+Current notebook preset: the user requested PC59 full guided evaluation through
+`colab_naclip.ipynb`, with tau=0.33, temperature=0.10, and PAMR off. The notebook
+uses `SOURCE_MODE='synced'` to verify and reuse the unpushed proposal source on
+the current runtime. Its `github` mode retains the clone/update workflow below.
+Keep live evaluation in the notebook for this request; do not launch a duplicate
+CLI evaluation. The separate tracker is `ImprovementsIdea/ExperimentResults.md`;
+each notebook run also writes its own Markdown report beside its named Drive folder.
+
 Read `COLAB.md` before running GPU work. The user's intended workflow is local
 editing on Ubuntu (including agent edits), with GPU execution on Google Colab.
 Two supported options are documented there: the CLI workflow for terminal/agent
@@ -42,6 +50,10 @@ Drive holds persistent datasets and results unless the user requests otherwise.
 - Commands: `python3 tools/colab_cli.py {sessions,new,sync,setup,smoke,eval}`.
 - Baselines: `baseline --dataset {ade20k,pc59} --stage {subset,full}` with explicit
   remote `--data-root` and persistent `--work-dir`; preparation: `prepare-data`.
+  Runner defaults to `--condition fixed` (PAMR off). Proposal modes: fixed,
+  guided, none; guided requires explicit tau/temperature. Use upstream only
+  for legacy PAMR-on settings. Summaries include pooled 3-pixel boundary and
+  interior accuracy; keep seeds, datasets, and settings matched across modes.
 - Extension: select a Colab GPU kernel in `colab_naclip.ipynb`; its first cell
   clones the configured GitHub repo into `/content/NACLIP` on a fresh runtime.
   Existing Git checkouts are reused unless `UPDATE_SOURCE=True`; updates require

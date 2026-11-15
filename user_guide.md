@@ -1,5 +1,13 @@
 # NACLIP user guide: Colab extension and CLI
 
+For the currently requested PC59 guided full run, open `colab_naclip.ipynb`,
+select the existing T4 kernel, run initialization, then the **PC59 guided full
+validation** cell. It is preset to tau=0.33, temperature=0.10 and PAMR off.
+Initialization uses `SOURCE_MODE='synced'` for the current unpushed proposal code;
+choose `github` for the clone workflow below. Results go into a named `guided`
+folder in Drive, with a separate Markdown report and console log beside it.
+See [ExperimentResults.md](ImprovementsIdea/ExperimentResults.md).
+
 Use Ubuntu and VS Code to edit source locally, and Google Colab to execute GPU work. You can use either the VS Code Colab extension or the Colab CLI. They have separate connection state: a CLI session listing alone does not establish whether an extension server is still available.
 
 ## 1. Understand where your files are
@@ -93,7 +101,7 @@ Local edits → local commit → push to Chowkey/NACLIP → notebook clone/fetch
 
 Committing alone does not publish changes. On a fresh runtime, run the first cell with `UPDATE_SOURCE=False` (the default); it clones automatically. To fetch new pushed commits on the same runtime, stop active jobs, set `UPDATE_SOURCE=True`, and rerun the first cell. The cell preserves modified checkouts and existing non-Git folders rather than overwriting them.
 
-Baseline results go to `/content/drive/MyDrive/NACLIP-results/extension-<timestamp>/<dataset>_<stage>/` by default. Adjust `BASELINE_WORK_DIR` for a custom destination; the standard evaluation cell instead uses `WORK_DIR`. Use a new folder per run. Mounted Drive outputs survive runtime deletion.
+Baseline results go to `/content/drive/MyDrive/NACLIP-results/extension-<timestamp>/<dataset>_<condition>_<stage>/` by default. Adjust `BASELINE_WORK_DIR` for a custom destination; the standard evaluation cell instead uses `WORK_DIR`. Use a new folder per run. Mounted Drive outputs survive runtime deletion.
 
 ### Alternative: upload uncommitted source
 
@@ -213,14 +221,18 @@ After verifying the remote dataset exists, run:
 
 ```bash
 python3 tools/colab_cli.py baseline --session naclip \
-  --dataset pc59 --stage full \
+  --dataset pc59 --stage full --condition fixed \
   --data-root /content/naclip_data/VOCdevkit/VOC2010 \
-  --work-dir /content/drive/MyDrive/NACLIP-results/my-new-run/pc59_full
+  --work-dir /content/drive/MyDrive/NACLIP-results/my-new-run/pc59_fixed_full
 ```
 
 For ADE20K, use `--dataset ade20k`, data root `/content/naclip_data/ADEChallengeData2016`, and a separate output directory. Use a new work directory for each evaluation. Runtime-local dataset caches must be prepared or copied again after runtime deletion; see `COLAB.md` for dataset preparation.
 
-**PAMR is enabled by default in the current baseline runner.** The smoke check disables PAMR, but that setting does not carry over to evaluation. A run intended to disable PAMR needs an explicit model configuration change before launch; the baseline wrapper currently has no `--pamr` option.
+**The runner now defaults to the proposal's `fixed` condition with PAMR disabled.** Use `--condition fixed`, `guided`, or `none` for the matched proposal comparison. `--condition upstream` retains the old PAMR-enabled model defaults. Historical 19.06/38.36 scores came from PAMR-enabled runs and must not be used as the PAMR-off proposal baseline.
+
+For guided runs, add `--condition guided --guidance-tau VALUE --guidance-temperature VALUE`; both values must be chosen explicitly before evaluation and kept the same across datasets. In the notebook, set `CONDITION`, `GUIDANCE_TAU`, and `GUIDANCE_TEMPERATURE` instead. Keep dataset settings and seed identical, and save each condition to a new empty output folder.
+
+`summary.json` includes `metrics['localization/boundary_accuracy']`, `metrics['localization/interior_accuracy']`, their pixel counts, and overall `mIoU`. Boundary accuracy uses a 3-pixel Euclidean ground-truth band at original resolution and excludes ignored pixels. Compare guided minus fixed boundary accuracy in percentage points. `null` means the region had no eligible pixels.
 
 ### Check usage and stop a server
 

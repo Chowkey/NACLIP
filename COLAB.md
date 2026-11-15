@@ -1,5 +1,15 @@
 # Local Ubuntu code, Colab GPU
 
+The notebook is currently preset for the requested **PC59 guided full run**
+(tau 0.33, temperature 0.10, PAMR off). Select the existing T4 kernel, run
+initialization, then the **PC59 guided full validation** cell. Its initialization
+uses `SOURCE_MODE='synced'` and verifies the proposal source already synced to
+the runtime; those local changes have not been pushed to GitHub. Set
+`SOURCE_MODE='github'` to use the clone/update workflow described below.
+This run writes to `NACLIP-results/guided/pc59_guided_full_tau0p33_temp0p10_<timestamp>`
+in Drive, with an automatically updated Markdown results report and console log
+beside the folder. See [experiment tracker](ImprovementsIdea/ExperimentResults.md).
+
 Open this NACLIP checkout as your VS Code folder on Ubuntu. Choose either workflow:
 
 | Option | Interface | Send local edits | Execute remotely |
@@ -135,15 +145,26 @@ Stop a CLI-managed runtime when finished (its temporary storage is released):
 .colab-cli/bin/colab stop -s naclip
 ```
 
-### Reproduce an unchanged baseline
+### Evaluate the proposal conditions
 
-After setup and a successful smoke check, `baseline` runs the existing model and
-dataset configs with reproducible image selection and extra recording hooks:
+After setup, `baseline` evaluates `--condition fixed` by default: original
+Gaussian bias with **PAMR disabled**. `guided` and `none` also disable PAMR;
+`upstream` is an explicit legacy mode retaining the original PAMR defaults.
+The underlying model default outside this runner remains unchanged.
+
+All conditions report overall mIoU plus boundary and interior accuracy. The
+boundary band uses both sides of valid horizontal/vertical label transitions,
+Euclidean distance <= 3 pixels on the original annotation grid, and excludes
+ignore label 255. Accuracies pool correct/total pixel counts across the split;
+they are not averages of per-image percentages. Regions with no eligible pixels
+have `null` accuracy in `summary.json`.
+
+Start with a fixed subset to validate the pipeline:
 
 ```bash
-python3 tools/colab_cli.py baseline --dataset ade20k --stage subset \
+python3 tools/colab_cli.py baseline --dataset ade20k --stage subset --condition fixed \
   --data-root /content/naclip_data/ADEChallengeData2016 \
-  --work-dir /content/drive/MyDrive/NACLIP-results/baseline-2026-11-15/ade20k_subset
+  --work-dir /content/drive/MyDrive/NACLIP-results/proposal/ade20k_fixed_subset
 ```
 
 Use `--dataset pc59` with root `/content/naclip_data/VOCdevkit/VOC2010` for PC59.
@@ -153,6 +174,42 @@ selected with seed 42 from sorted image IDs. `--stage full` evaluates all 2,000
 ADE20K or 5,105 PC59 validation images; use a separate work directory for each run.
 The execution timeout defaults to 12 hours; this does not extend Colab VM lifetime.
 
+For guided runs, supply `--condition guided --guidance-tau VALUE
+--guidance-temperature VALUE`. The threshold must be in [-1, 1], temperature
+must be positive, and both must be finite. Choose them before evaluation and keep
+them identical across ADE20K and PC59; the proposal does not prescribe values.
+The implementation uses raw penultimate-block features before the final-block
+layer norm, excludes CLS from cosine similarity, computes similarity in float32,
+and shares each image's gate across attention heads. Only the fixed Gaussian is
+cached; the content-dependent gate is recomputed on each forward pass.
+
+Run `--condition none` for key-key attention without spatial bias. Give every
+condition a new, empty work directory and use the same seed/subset selection.
+Set `--stage full` only after checking the subset. Historical PAMR-enabled scores
+are not comparable to these proposal baselines; request `--condition upstream`
+when intentionally reproducing the old inference settings.
+
+`summary.json` records `condition`, `resolved_model`, `proposal_protocol`, and
+`metrics`, including `localization/boundary_accuracy`,
+`localization/interior_accuracy`, and their correct/total pixel counts. Main
+comparison: guided boundary accuracy minus fixed boundary accuracy in percentage
+points, with overall mIoU and interior accuracy checked alongside it.
+
+Remote correctness and synthetic integration checks (no dataset required):
+
+```bash
+cd /content/NACLIP
+/content/naclip-env/bin/python -m unittest discover -s tools -p 'test_*.py' -v
+/content/naclip-env/bin/python tools/proposal_smoke.py
+```
+
+The smoke script uses tau=0.5 and temperature=0.1 solely as test inputs; these are
+not selected research hyperparameters. It checks all three conditions through
+real CLIP inference and MMSeg's IoU/boundary evaluators on a synthetic image.
+It does not establish an accuracy improvement. See
+[proposal specification](ImprovementsIdea/Proposal.md).
+
+
 Outputs include a resolved config, source hashes, package versions, image IDs,
 timing, and a metrics summary. Subset runs also save raw class-index PNGs and
 comparison JPEGs (input / ground truth overlay / prediction overlay). Class IDs in
@@ -161,7 +218,7 @@ not use `eval.py --show-dir`, which changes PAMR settings. PAMR failures invalid
 the baseline and are recorded. Timing excludes dataloader fetch and artifact
 export; steady-state statistics exclude the first sample, but mIoU uses all images.
 
-Repository README comparison values: ADE20K 19.05 and PC59 38.35 mIoU. The Colab
+Upstream PAMR-enabled README comparison values: ADE20K 19.05 and PC59 38.35 mIoU. The Colab
 dependency stack differs from the paper setup; matching the model/config alone
 does not establish exact numerical reproduction. Full-run summaries, not subset
 scores, are the baseline measurements.
@@ -217,23 +274,28 @@ than combining uploaded files with the notebook's Git-managed checkout.
    dependency changes. This creates Python 3.10 with PyTorch 2.0.1/CUDA 11.8 and
    MMCV 2.0.1 at `/content/naclip-env`, without changing the notebook kernel's
    Python/PyTorch. The final import check must pass.
-3. **GPU inference check:** run the smoke cell. It checks execution on a synthetic
-   image, not accuracy, and downloads pretrained CLIP weights when needed.
+3. **GPU inference check:** run the smoke cell. It checks all three proposal
+   conditions and boundary/IoU integration on a synthetic image, not accuracy.
+   It downloads pretrained CLIP weights when needed.
 4. **Mount Drive:** set `MOUNT_DRIVE=True` and run that cell. Alternatively use
    **Colab: Mount Google Drive to Server...** from the command palette. Complete
    authorization yourself and use the Drive account containing your datasets.
 5. **Prepare data only if needed:** the optional preparation cell is disabled by
    default. Reuse the already prepared ADE20K/PC59 data in Drive for normal runs.
 6. **Baseline:** set `RUN_BASELINE=True`, `DATASET='ade20k'` or `'pc59'`, and
-   `STAGE='subset'` or `'full'`. Defaults select 32 fixed images with seed 42 for
-   subsets. A unique `extension-<timestamp>` results folder is created in Drive.
+   `STAGE='subset'` or `'full'`, and `CONDITION='fixed'`, `'guided'`, or `'none'`.
+   Guided requires explicit `GUIDANCE_TAU` and `GUIDANCE_TEMPERATURE`. Defaults
+   select 32 fixed images with seed 42 and PAMR off. Outputs go under
+   `extension-<timestamp>/<dataset>_<condition>_<stage>` in Drive.
    The cell invokes `tools/run_baseline.py` with the isolated Python and streams
    its output below the cell. Run one dataset/stage at a time. Full splits contain
    2,000 ADE20K images and 5,105 PC59 images.
 7. **Inspect results:** run the last cell after evaluation, or set `RESULT_DIR` to
    an existing run. It reads `progress.json` / `summary.json` and displays a saved
    comparison if available. Read `baseline_valid` and `pamr_failures` along with
-   `metrics.mIoU`; a completed image count alone does not prove a clean baseline.
+   `metrics.mIoU`, `metrics['localization/boundary_accuracy']`, and
+   `metrics['localization/interior_accuracy']`. A completed image count alone
+   does not prove a clean baseline.
 
 The older optional upstream-evaluation cell remains available for other dataset
 configs. Use the baseline cell for saved predictions, timing and `summary.json`.
@@ -286,6 +348,15 @@ without PAMR failures: ADE20K 15.65 subset mIoU, PC59 30.14 subset mIoU. These a
 development measurements, not full benchmark results. Their predictions,
 comparisons, timing and provenance are under Drive's
 `NACLIP-results/baseline-2026-11-15/{ade20k,pc59}_subset`.
+
+Proposal implementation checks on the T4 passed 16 unit tests (including CUDA
+half-precision attention), real CLIP/MMSeg inference for fixed/guided/none, and
+actual runner execution on two synthetic images per condition. Runner checks
+confirmed identical image IDs, PAMR disabled, correct boundary/interior counts
+on the original annotation grid, final progress, summaries, and prediction exports.
+These synthetic checks establish pipeline execution, not benchmark accuracy.
+Local copies of the synthetic summaries are ignored under
+`work_logs/proposal-implementation-check/`.
 
 The completed full PC59 summary reported 5,105 images, 38.36 mIoU, zero PAMR
 failures, and `baseline_valid=true`, with evaluation taking 2,164.10 seconds.

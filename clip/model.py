@@ -10,6 +10,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .spatial_bias import feature_guided_bias, validate_guidance
+
 
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
@@ -81,15 +83,30 @@ class VisionTransformer(nn.Module):
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         self.arch, self.attn_strategy, self.gaussian_std = None, None, 0
+        self.spatial_bias = 'fixed'
+        self.guidance_tau = 0.0
+        self.guidance_temperature = 1.0
+        self.guidance_epsilon = 1e-6
         self.addition_cache = dict()
 
     # nonly: Neighbourhood Only, kk: KK-Similarity, csa: SCLIP, vanilla: CLIP
-    def set_params(self, arch, attn_strategy, gaussian_std):
+    def set_params(self, arch, attn_strategy, gaussian_std, spatial_bias='fixed',
+                   guidance_tau=0.0, guidance_temperature=1.0, guidance_epsilon=1e-6):
         assert arch in ['reduced', 'vanilla']
         assert attn_strategy in ['naclip', 'nonly', 'kk', 'csa', 'vanilla']
         assert attn_strategy != 'csa' or arch == 'vanilla'
         assert gaussian_std > 0 or attn_strategy not in ['naclip', 'nonly']
+        if spatial_bias not in ['fixed', 'guided', 'none']:
+            raise ValueError('spatial_bias must be fixed, guided, or none')
+        if spatial_bias != 'fixed' and attn_strategy != 'naclip':
+            raise ValueError('guided/none spatial bias requires naclip key-key attention')
+        validate_guidance(guidance_tau, guidance_temperature, guidance_epsilon)
         self.arch, self.attn_strategy, self.gaussian_std = arch, attn_strategy, gaussian_std
+        self.spatial_bias = spatial_bias
+        self.guidance_tau = guidance_tau
+        self.guidance_temperature = guidance_temperature
+        self.guidance_epsilon = guidance_epsilon
+        self.addition_cache.clear()
 
     def forward(self, x: torch.Tensor, return_all=False):
         B, nc, w, h = x.shape
@@ -111,12 +128,13 @@ class VisionTransformer(nn.Module):
         x = x.permute(1, 0, 2)  # NLD -> LND
         for blk in self.transformer.resblocks[:-1]:
             x = blk(x)
+        guidance_features = x if self.spatial_bias == 'guided' else None
         blk = self.transformer.resblocks[-1]
         if self.arch == 'vanilla':  # If attn_strategy is also 'vanilla', custom_attn acts the same as vanilla CLIP attn
-            x = x + self.custom_attn(blk.attn, blk.ln_1(x), n_patches)
+            x = x + self.custom_attn(blk.attn, blk.ln_1(x), n_patches, guidance_features=guidance_features)
             x = x + blk.mlp(blk.ln_2(x))
         elif self.arch == 'reduced':
-            x = self.custom_attn(blk.attn, blk.ln_1(x), n_patches)
+            x = self.custom_attn(blk.attn, blk.ln_1(x), n_patches, guidance_features=guidance_features)
         else:
             raise NotImplemented
 
@@ -175,7 +193,8 @@ class VisionTransformer(nn.Module):
             out = torch.hstack([torch.zeros((dim1 * dim2 + 1, 1)), v_adjusted])
         return out
 
-    def custom_attn(self, attn_layer, x, n_patches, return_attn=False, with_attn=False):
+    def custom_attn(self, attn_layer, x, n_patches, return_attn=False, with_attn=False,
+                    guidance_features=None):
         num_heads = attn_layer.num_heads
         num_tokens, bsz, embed_dim = x.size()
         head_dim = embed_dim // num_heads
@@ -187,16 +206,28 @@ class VisionTransformer(nn.Module):
         v = v.contiguous().view(-1, bsz * num_heads, head_dim).transpose(0, 1)
 
         if self.attn_strategy in ['naclip', 'nonly']:
-            addition = self.addition_cache.get(n_patches)
+            cache_key = (n_patches, x.device, x.dtype)
+            addition = self.addition_cache.get(cache_key)
             if addition is None:
                 window_size = [side * 2 - 1 for side in n_patches]
                 window = VisionTransformer.gaussian_window(*window_size, std=self.gaussian_std)
                 addition = VisionTransformer.get_attention_addition(*n_patches, window).unsqueeze(0).to(x.dtype).to(x.device)
-                self.addition_cache[n_patches] = addition
+                self.addition_cache[cache_key] = addition
 
             if self.attn_strategy == 'naclip':
                 attn_weights = torch.bmm(k, k.transpose(1, 2)) * scale
                 omega = addition
+                if self.spatial_bias == 'none':
+                    omega = 0
+                elif self.spatial_bias == 'guided':
+                    if guidance_features is None:
+                        raise ValueError('guided bias requires penultimate-block features')
+                    omega = feature_guided_bias(
+                        addition, guidance_features, self.guidance_tau,
+                        self.guidance_temperature, self.guidance_epsilon)
+                    # q/k/v flatten batch first, then head. Share each image's
+                    # gate across its heads without mixing different images.
+                    omega = omega.repeat_interleave(num_heads, dim=0)
             elif self.attn_strategy == 'nonly':
                 attn_weights = torch.zeros((num_heads, num_tokens, num_tokens)).to(x.dtype).to(x.device)
                 omega = addition * (scale * torch.einsum('hop,hPO->hpP', q.norm(dim=2).unsqueeze(1), k.norm(dim=2).unsqueeze(2)).mean().item())

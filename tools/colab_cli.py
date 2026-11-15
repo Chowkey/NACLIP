@@ -127,6 +127,10 @@ def main():
     parser.add_argument('--stage', choices=['subset', 'full'])
     parser.add_argument('--subset-size', type=int, default=32)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--condition', choices=['fixed', 'guided', 'none', 'upstream'], default='fixed')
+    parser.add_argument('--guidance-tau', type=float)
+    parser.add_argument('--guidance-temperature', type=float)
+    parser.add_argument('--guidance-epsilon', type=float, default=1e-6)
     args = parser.parse_args()
     if args.dry_run:
         if args.action != 'sync':
@@ -138,6 +142,8 @@ def main():
         parser.error(f'{args.action} requires --data-root and --work-dir (remote Linux paths)')
     if args.action == 'baseline' and (not args.dataset or not args.stage):
         parser.error('baseline requires --dataset and --stage')
+    if args.action == 'baseline' and args.condition == 'guided' and (args.guidance_tau is None or args.guidance_temperature is None):
+        parser.error('guided requires --guidance-tau and --guidance-temperature')
     if sys.platform != 'linux':
         parser.error('Run this workflow on Ubuntu. You can preview sync with --dry-run here.')
     local_cli = ROOT / '.colab-cli/bin/colab'
@@ -181,7 +187,12 @@ def main():
             command = [REMOTE_PYTHON, '-u', 'tools/run_baseline.py',
                        '--dataset', args.dataset, '--stage', args.stage,
                        '--data-root', args.data_root, '--work-dir', args.work_dir,
-                       '--subset-size', str(args.subset_size), '--seed', str(args.seed)]
+                       '--subset-size', str(args.subset_size), '--seed', str(args.seed),
+                       '--condition', args.condition, '--guidance-epsilon', str(args.guidance_epsilon)]
+            if args.guidance_tau is not None:
+                command += ['--guidance-tau', str(args.guidance_tau)]
+            if args.guidance_temperature is not None:
+                command += ['--guidance-temperature', str(args.guidance_temperature)]
         else:
             command = [REMOTE_PYTHON, '-u', 'tools/colab_eval.py', '--config', args.config,
                        '--data-root', args.data_root, '--work-dir', args.work_dir]

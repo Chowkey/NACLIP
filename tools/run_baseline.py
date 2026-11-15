@@ -1,4 +1,4 @@
-"""Run the unchanged NACLIP configuration with reproducible subsets and artifacts.
+"""Evaluate matched spatial-bias conditions with boundary accuracy and artifacts.
 
 Use the isolated Colab model Python. Prediction export uses a hook rather than
 eval.py's visualization option, which changes the model's PAMR configuration.
@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import platform
@@ -33,15 +34,28 @@ def main():
     parser.add_argument('--work-dir', required=True, type=Path)
     parser.add_argument('--subset-size', type=int, default=32)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--condition', choices=['fixed', 'guided', 'none', 'upstream'], default='fixed',
+                        help='Proposal conditions disable PAMR; upstream retains original PAMR defaults')
+    parser.add_argument('--guidance-tau', type=float)
+    parser.add_argument('--guidance-temperature', type=float)
+    parser.add_argument('--guidance-epsilon', type=float, default=1e-6)
     args = parser.parse_args()
+    if args.condition == 'guided' and (args.guidance_tau is None or args.guidance_temperature is None):
+        parser.error('guided requires explicit --guidance-tau and --guidance-temperature')
+    if args.guidance_tau is not None and (not math.isfinite(args.guidance_tau) or not -1 <= args.guidance_tau <= 1):
+        parser.error('--guidance-tau must be finite and within [-1, 1]')
+    if args.guidance_temperature is not None and (not math.isfinite(args.guidance_temperature) or args.guidance_temperature <= 0):
+        parser.error('--guidance-temperature must be finite and positive')
+    if not math.isfinite(args.guidance_epsilon) or args.guidance_epsilon <= 0:
+        parser.error('--guidance-epsilon must be finite and positive')
     if args.subset_size < 2:
         parser.error('--subset-size must be at least 2 for timing statistics')
     if not args.data_root.is_dir():
         parser.error(f'Missing dataset: {args.data_root}')
     if str(args.work_dir).startswith('/content/drive/') and not Path('/content/drive/MyDrive').is_dir():
         parser.error('Mount Drive before saving persistent results')
-    if (args.work_dir / 'summary.json').exists():
-        parser.error('This run already has a summary; use a new work directory')
+    if args.work_dir.exists() and any(args.work_dir.iterdir()):
+        parser.error('Work directory is not empty; use a new directory for each condition/run')
     os.chdir(ROOT)
     # Colab exports a notebook-only backend absent in the isolated environment.
     os.environ['MPLBACKEND'] = 'Agg'
@@ -55,12 +69,22 @@ def main():
     from mmseg.registry import DATASETS
     from mmseg.utils import register_all_modules
     import custom_datasets  # noqa: F401; registers datasets
-    import naclip  # noqa: F401; registers the unchanged model
+    import naclip  # noqa: F401; registers the model
+    import tools.boundary_metric  # noqa: F401; registers BoundaryAccuracy
 
     assert torch.cuda.is_available(), 'GPU runtime required'
     register_all_modules(init_default_scope=True)
     config = 'configs/cfg_ade20k.py' if args.dataset == 'ade20k' else 'configs/cfg_context59.py'
     cfg = Config.fromfile(str(ROOT / config))
+    if args.condition != 'upstream':
+        cfg.model.update(arch='reduced', attn_strategy='naclip', gaussian_std=5.,
+                         pamr_steps=0, spatial_bias=args.condition,
+                         guidance_tau=args.guidance_tau if args.guidance_tau is not None else 0.,
+                         guidance_temperature=args.guidance_temperature if args.guidance_temperature is not None else 1.,
+                         guidance_epsilon=args.guidance_epsilon)
+    cfg.test_evaluator = [cfg.test_evaluator,
+                          dict(type='BoundaryAccuracy', radius=3, ignore_index=255,
+                               prefix='localization')]
     cfg.work_dir = str(args.work_dir)
     cfg.randomness = dict(seed=args.seed)
     cfg.test_dataloader.dataset.data_root = str(args.data_root)
@@ -85,7 +109,8 @@ def main():
 
     source_files = ['naclip.py', 'clip/model.py', 'clip/clip.py', 'pamr.py',
                     'custom_datasets.py', config, 'configs/base_config.py',
-                    'prompts/imagenet_template.py', 'tools/run_baseline.py']
+                    'prompts/imagenet_template.py', 'tools/run_baseline.py',
+                    'clip/spatial_bias.py', 'tools/boundary_metric.py', 'tools/boundary_metrics.py']
     source_files += ['configs/cls_ade20k.txt' if args.dataset == 'ade20k' else 'configs/cls_context59.txt']
     versions = subprocess.check_output([sys.executable, '-m', 'pip', 'freeze'], text=True) if subprocess.run([sys.executable, '-m', 'pip', '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0 else ''
     # uv-created environments may not contain pip; metadata needs no installer.
@@ -93,13 +118,17 @@ def main():
         from importlib.metadata import distributions
         versions = '\n'.join(sorted(f'{d.metadata["Name"]}=={d.version}' for d in distributions()))
     (args.work_dir / 'packages.txt').write_text(versions)
-    manifest = dict(dataset=args.dataset, stage=args.stage, image_count=len(selected),
+    manifest = dict(dataset=args.dataset, stage=args.stage, condition=args.condition, image_count=len(selected),
                     seed=args.seed, config=config, data_root=str(args.data_root),
                     python=platform.python_version(), torch=torch.__version__,
                     cuda=torch.version.cuda, gpu=torch.cuda.get_device_name(0),
                     source_sha256={name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in source_files},
                     timing_definition='CUDA-synchronized test iteration including preprocessing, inference and metric processing; excludes dataloader fetch and prediction export',
-                    accuracy_note='Subset mIoU is a development measurement; only full-split mIoU is a baseline result.')
+                    accuracy_note='Subset scores are development measurements; compare matched full-split conditions.',
+                    boundary_definition='both sides of valid horizontal/vertical class transitions; Euclidean distance <= 3 px on original annotation grid; ignore=255; pooled pixel accuracy in percent',
+                    interior_definition='valid pixels outside the same 3-pixel boundary band',
+                    guidance_feature_source='raw penultimate visual block output before final-block layer norm; excludes CLS',
+                    proposal_protocol=args.condition != 'upstream')
     write_json(args.work_dir / 'manifest.json', manifest)
     timings = []
     pamr_failures = []
@@ -142,10 +171,10 @@ def main():
                     views = args.work_dir / 'comparisons'
                     views.mkdir(exist_ok=True)
                     panel.save(views / f'{image_id}.jpg', quality=92)
-            if (batch_idx + 1) % 25 == 0 or args.stage == 'subset':
+            if (batch_idx + 1) % 25 == 0 or len(timings) == len(selected) or args.stage == 'subset':
                 write_json(args.work_dir / 'progress.json', dict(completed=len(timings), total=len(selected),
                            elapsed_seconds=time.perf_counter() - test_started,
-                           pamr_failures=pamr_failures))
+                           condition=args.condition, pamr_failures=pamr_failures))
                 print(f'BASELINE_PROGRESS {args.dataset} {args.stage} {len(timings)}/{len(selected)}', flush=True)
 
     capture = RecordPAMRFailures()
@@ -155,11 +184,17 @@ def main():
     init_seconds = time.perf_counter() - initialized
     runner.register_hook(RecordPredictions(), priority='LOWEST')
     model = runner.model
+    if args.condition != 'upstream' and model.pamr is not None:
+        raise RuntimeError('Proposal conditions require PAMR disabled')
     manifest['resolved_model'] = {name: getattr(model, name) for name in ['logit_scale', 'prob_thd', 'slide_stride', 'slide_crop']}
     manifest['resolved_model'].update(arch=model.net.visual.arch, attn_strategy=model.net.visual.attn_strategy,
                                       gaussian_std=model.net.visual.gaussian_std,
                                       pamr_steps=model.pamr.num_iter if model.pamr is not None else 0,
-                                      pamr_dilations=[8, 16])
+                                      pamr_dilations=list(model.pamr.aff_m.dilations) if model.pamr is not None else [],
+                                      spatial_bias=model.net.visual.spatial_bias,
+                                      guidance_tau=model.net.visual.guidance_tau,
+                                      guidance_temperature=model.net.visual.guidance_temperature,
+                                      guidance_epsilon=model.net.visual.guidance_epsilon)
     write_json(args.work_dir / 'manifest.json', manifest)
     write_json(args.work_dir / 'classes.json', runner.test_dataloader.dataset.metainfo['classes'])
     torch.cuda.reset_peak_memory_stats()
@@ -170,8 +205,10 @@ def main():
     # First sample is retained in all metrics, but excluded from steady-state latency.
     steady = [row['test_iteration_seconds'] for row in timings[1:]]
     assert len(timings) == len(selected), 'Evaluation did not visit every selected image'
-    summary = dict(dataset=args.dataset, stage=args.stage, images=len(timings),
-                   metrics={k: float(v) for k, v in metrics.items()},
+    summary = dict(dataset=args.dataset, stage=args.stage, condition=args.condition, images=len(timings),
+                   metrics={k: float(v) if math.isfinite(v) else None for k, v in metrics.items()},
+                   resolved_model=manifest['resolved_model'], proposal_protocol=manifest['proposal_protocol'],
+                   boundary_definition=manifest['boundary_definition'],
                    initialization_seconds=init_seconds, test_wall_seconds=elapsed,
                    steady_mean_seconds=float(np.mean(steady)), steady_median_seconds=float(np.median(steady)),
                    peak_gpu_allocated_gib=torch.cuda.max_memory_allocated() / 2**30,
@@ -180,7 +217,7 @@ def main():
     write_json(args.work_dir / 'summary.json', summary)
     print('BASELINE_SUMMARY ' + json.dumps(summary), flush=True)
     if pamr_failures:
-        raise RuntimeError('PAMR failed on some images; this is not a valid unchanged baseline')
+        raise RuntimeError('PAMR failed on some images; this is not a consistent PAMR baseline')
 
 
 if __name__ == '__main__':
