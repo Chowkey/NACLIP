@@ -17,8 +17,10 @@ This repository contains the code for our **WACV 2025** paper, [Pay Attention to
 ### &#x1F4E6; Requirements
 
 For local Ubuntu development with GPU execution on Google Colab, see
-[the Colab workflow](COLAB.md). It includes command-line source upload, remote
-dependency setup, and inference/evaluation commands for users and coding agents.
+[the Colab workflow](COLAB.md) and [user guide](user_guide.md). The CLI syncs
+local source directly; the VS Code extension notebook clones committed and pushed
+source from `Chowkey/NACLIP`. Both cover remote dependency setup and evaluation;
+the user guide explains connections, file browsing, and downloading results.
 
 To run NACLIP, please install the following packages. We used `Python 3.9` in our experiments.
 

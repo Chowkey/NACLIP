@@ -1,8 +1,18 @@
 # Local Ubuntu code, Colab GPU
 
-Open this NACLIP checkout as your VS Code folder on Ubuntu. Agents edit local
-source and run the commands below to send it to Colab. No Git push or manual
-upload is needed. `AGENTS.md` records this workflow for future agents.
+Open this NACLIP checkout as your VS Code folder on Ubuntu. Choose either workflow:
+
+| Option | Interface | Send local edits | Execute remotely |
+| --- | --- | --- | --- |
+| A: CLI | Local terminal / coding agent | `python3 tools/colab_cli.py sync` | `setup`, `smoke`, `baseline` commands |
+| B: [VS Code Colab extension](#option-b-vs-code-colab-extension) | Notebook cells / optional Colab terminal | Commit and push to `Chowkey/NACLIP`; notebook clones/fetches | `colab_naclip.ipynb` cells |
+
+Both use `/content/NACLIP`, the isolated `/content/naclip-env` model environment,
+and the same baseline runner. Follow the user's preferred option. Option A sends
+uncommitted local edits directly and needs no push. Option B fetches committed,
+pushed source from `https://github.com/Chowkey/NACLIP.git` and needs no local CLI
+installation or CLI login. A local commit alone does not update GitHub. See
+[user_guide.md](user_guide.md) for connecting, viewing files, and fetching results.
 
 ## One-time Ubuntu setup
 
@@ -67,6 +77,45 @@ After a runtime is deleted, create a new session and repeat `sync`, `setup`, and
 
 ## Dataset evaluation
 
+### Prepare the proposal datasets
+
+`tools/prepare_datasets.py` follows the sibling notebook
+`NaClip_ComputerVision/NaCLIP_dataset_setup_preprocess.ipynb`: download ADE20K,
+VOC2010 images and official PASCAL Context annotations; verify the Context archive
+MD5; convert 5,105 PC59 validation masks in NACLIP class order; validate 2,000
+ADE20K validation image/mask pairs; generate the notebook's boundary/valid-pixel
+masks and write `naclip_validation_manifest.json`. Masks retain original resolution.
+It uses the synced checkout's class list rather than cloning another checkout.
+
+After `sessions` and `sync` on the selected runtime (model `setup` is not needed):
+
+```bash
+.colab-cli/bin/colab drivemount -s naclip
+python3 tools/colab_cli.py prepare-data
+```
+
+Complete Drive authorization yourself. The default dataset root is
+`/content/drive/MyDrive/datasets`; override it with `--data-root` if needed.
+Downloads and preprocessing may take a while; this action allows two hours
+(`--timeout SECONDS` overrides it). Reruns reuse downloads/extractions; conversion
+and boundary generation run again. This is CPU preprocessing and needs no GPU.
+The VOC archive's top-level directory is detected to avoid nested
+`VOCdevkit/VOCdevkit` paths. Do not run two preparation jobs against the same root.
+
+Prepared evaluation roots and configs:
+
+| Config | Remote data root |
+| --- | --- |
+| `configs/cfg_ade20k.py` | `/content/drive/MyDrive/datasets/ADEChallengeData2016` |
+| `configs/cfg_context59.py` | `/content/drive/MyDrive/datasets/VOCdevkit/VOC2010` |
+
+Preparation writes persistent data to Drive as in the source notebook. For faster
+repeated evaluation, copy the prepared dataset to `/content` once per runtime and
+point `eval --data-root` at that copy. Boundary masks are additional proposal
+artifacts; standard NACLIP evaluation reads the semantic annotation masks.
+
+### Run evaluation
+
 Prepare the dataset following the upstream README. To mount Drive and evaluate:
 
 ```bash
@@ -86,47 +135,169 @@ Stop a CLI-managed runtime when finished (its temporary storage is released):
 .colab-cli/bin/colab stop -s naclip
 ```
 
-## VS Code notebook alternative and remote environment
+### Reproduce an unchanged baseline
 
-Keep this folder as the source of truth for local editing and agents. Open
-`colab_naclip.ipynb`, then Select Kernel > Colab > New Colab Server and choose
-a GPU. Google sign-in is completed by you in the browser.
+After setup and a successful smoke check, `baseline` runs the existing model and
+dataset configs with reproducible image selection and extra recording hooks:
 
-Use Explorer's Upload to Colab action for selected source folders/files.
-The notebook expects the uploaded checkout at `/content/NACLIP`; change its
-PROJECT setting if the extension uploads it elsewhere. Upload updated source
-files again after local edits; this is not automatic synchronization. Do not
-upload `.git`, credentials, or large datasets. Alternatively upload the `clip`,
-`configs`, `prompts`, `tools` folders and the root Python files individually.
+```bash
+python3 tools/colab_cli.py baseline --dataset ade20k --stage subset \
+  --data-root /content/naclip_data/ADEChallengeData2016 \
+  --work-dir /content/drive/MyDrive/NACLIP-results/baseline-2026-11-15/ade20k_subset
+```
 
-Run notebook cells in order. The setup creates a separate Python 3.10 environment
-under `/content/naclip-env`, with PyTorch 2.0.1/CUDA 11.8 and a matching MMCV
-2.0.1 binary wheel. This adapts the upstream Python 3.9/PyTorch 1.10 instructions
-to hosted Colab; benchmark equivalence has not been established. It leaves the
-notebook kernel's Python and PyTorch unchanged. Downloads may take several minutes.
+Use `--dataset pc59` with root `/content/naclip_data/VOCdevkit/VOC2010` for PC59.
+The `/content/naclip_data` directories are runtime-local copies of the prepared
+Drive data; copy them first, or point directly to Drive. Subsets contain 32 images
+selected with seed 42 from sorted image IDs. `--stage full` evaluates all 2,000
+ADE20K or 5,105 PC59 validation images; use a separate work directory for each run.
+The execution timeout defaults to 12 hours; this does not extend Colab VM lifetime.
 
-The smoke check loads CLIP weights and runs NACLIP on a synthetic image. It checks
-GPU execution, not segmentation quality. For benchmark results, prepare the dataset
-as described in the upstream README, mount Drive, and set DATA_ROOT and WORK_DIR
-in the evaluation cell. For VOC21, DATA_ROOT should contain JPEGImages,
-SegmentationClass, and ImageSets/Segmentation/val.txt.
+Outputs include a resolved config, source hashes, package versions, image IDs,
+timing, and a metrics summary. Subset runs also save raw class-index PNGs and
+comparison JPEGs (input / ground truth overlay / prediction overlay). Class IDs in
+predictions are zero-based; use `classes.json` for their meaning. This export does
+not use `eval.py --show-dir`, which changes PAMR settings. PAMR failures invalidate
+the baseline and are recorded. Timing excludes dataloader fetch and artifact
+export; steady-state statistics exclude the first sample, but mIoU uses all images.
 
-The notebook's evaluation cell is disabled until RUN_EVALUATION is set to True.
-Use a Drive path for WORK_DIR to retain results after the runtime is recycled.
-For faster data loading, copy datasets to `/content` before evaluation. Local
-Windows paths cannot be read by Colab. The VS Code local terminal remains local;
-the notebook launches the isolated remote Python for NACLIP.
+Repository README comparison values: ADE20K 19.05 and PC59 38.35 mIoU. The Colab
+dependency stack differs from the paper setup; matching the model/config alone
+does not establish exact numerical reproduction. Full-run summaries, not subset
+scores, are the baseline measurements.
 
-After a runtime is deleted, upload the source and rerun setup. Save/download useful
-outputs before disconnecting. GPU availability and session duration depend on Colab.
+## Option B: VS Code Colab extension
+
+### Connect a notebook
+
+1. Install the official [Google Colab extension](https://github.com/googlecolab/colab-vscode)
+   in VS Code and open this checkout as the workspace.
+2. Open `colab_naclip.ipynb`, click **Select Kernel → Colab**, and select the
+   intended existing GPU server. Create a **New Colab Server** with a GPU only if
+   an appropriate server is not already available. Complete Google sign-in in
+   your browser. Extension and CLI login/session names are not interchangeable.
+3. The notebook's cells execute on Colab. The ordinary VS Code terminal still
+   executes locally. Check the extension's Resources and Contents views for the
+   chosen server and its `/content` files. Avoid starting a second evaluation on
+   a GPU already running another job.
+
+### Get source from GitHub (notebook default)
+
+The first notebook cell clones `https://github.com/Chowkey/NACLIP.git`, branch
+`main`, into `/content/NACLIP`. Set `REPO_URL`, `REPO_BRANCH`, or `PROJECT` in
+that cell to change these values. No archive upload is needed.
+
+Only committed and pushed files are included. Local edits and untracked scripts
+must be committed and pushed deliberately before the runtime can fetch them.
+The cell prints the checked-out commit and source preparation time, and checks
+that required project scripts exist before dependency installation.
+
+An existing Git checkout is kept unless `UPDATE_SOURCE=True`. Updating requires
+a clean checkout on the configured branch and uses a fast-forward merge. Wait
+for active jobs to finish before updating. An existing uploaded folder without
+Git metadata is preserved; choose a different `PROJECT` path to clone alongside
+it. The first cell does not extract old `extension-source.zip` archives.
+
+### Alternative: upload local source
+
+To run uncommitted local edits, use CLI `sync` on a verified CLI session, or
+right-click a source-only local folder in Explorer and choose **Upload to Colab**.
+The extension uploads the selected folder under `/content/<folder-name>`.
+Exclude environments, `.git`, credentials, datasets, weights, and output folders.
+The Git-based first cell requires a Git checkout. For uncommitted code, the
+recommended alternative is the CLI setup/smoke/baseline workflow above rather
+than combining uploaded files with the notebook's Git-managed checkout.
+
+### Run the notebook
+
+1. **Initialize:** check `REPO_URL`, `REPO_BRANCH`, and `PROJECT`, then run the
+   first code cell. It clones or checks the checkout and verifies GPU/source.
+   Set `UPDATE_SOURCE=True` only when ready to fetch pushed updates.
+2. **Install isolated dependencies:** run once per new runtime, and after
+   dependency changes. This creates Python 3.10 with PyTorch 2.0.1/CUDA 11.8 and
+   MMCV 2.0.1 at `/content/naclip-env`, without changing the notebook kernel's
+   Python/PyTorch. The final import check must pass.
+3. **GPU inference check:** run the smoke cell. It checks execution on a synthetic
+   image, not accuracy, and downloads pretrained CLIP weights when needed.
+4. **Mount Drive:** set `MOUNT_DRIVE=True` and run that cell. Alternatively use
+   **Colab: Mount Google Drive to Server...** from the command palette. Complete
+   authorization yourself and use the Drive account containing your datasets.
+5. **Prepare data only if needed:** the optional preparation cell is disabled by
+   default. Reuse the already prepared ADE20K/PC59 data in Drive for normal runs.
+6. **Baseline:** set `RUN_BASELINE=True`, `DATASET='ade20k'` or `'pc59'`, and
+   `STAGE='subset'` or `'full'`. Defaults select 32 fixed images with seed 42 for
+   subsets. A unique `extension-<timestamp>` results folder is created in Drive.
+   The cell invokes `tools/run_baseline.py` with the isolated Python and streams
+   its output below the cell. Run one dataset/stage at a time. Full splits contain
+   2,000 ADE20K images and 5,105 PC59 images.
+7. **Inspect results:** run the last cell after evaluation, or set `RESULT_DIR` to
+   an existing run. It reads `progress.json` / `summary.json` and displays a saved
+   comparison if available. Read `baseline_valid` and `pamr_failures` along with
+   `metrics.mIoU`; a completed image count alone does not prove a clean baseline.
+
+The older optional upstream-evaluation cell remains available for other dataset
+configs. Use the baseline cell for saved predictions, timing and `summary.json`.
+Subset predictions have zero-based class IDs; `classes.json` names the classes.
+
+A notebook kernel runs one cell at a time: watch the running cell's output while
+it is busy. To inspect progress concurrently, use another notebook kernel on the
+same server or the Colab Terminal. Merely opening another console does not attach
+it to an existing process's stdout; follow that process's saved log instead.
+
+### Optional extension terminal and remote editing
+
+The official guide marks **Colab Terminal** and **Server Mounting** experimental.
+Enable the desired experimental feature in the extension settings and reload VS
+Code if prompted. **Colab: Open Terminal** opens a shell on the selected server.
+From that remote terminal you can run the same model runner directly:
+
+```bash
+cd /content/NACLIP
+/content/naclip-env/bin/python -u tools/run_baseline.py \
+  --dataset pc59 --stage subset \
+  --data-root /content/drive/MyDrive/datasets/VOCdevkit/VOC2010 \
+  --work-dir /content/drive/MyDrive/NACLIP-results/my-extension-run/pc59_subset
+```
+
+Choose a new work directory for every run. **Colab: Mount Server To Workspace...**
+allows editing remote files in VS Code; such edits affect the remote copy and do
+not update the local checkout automatically. Keep local source as the source of
+truth, or deliberately bring remote changes back before the next source upload.
+
+Data under `/content` is temporary. Drive datasets/results persist; source cloning,
+local dataset caches and environment setup must be repeated for a fresh runtime.
+The Colab dependency stack differs from the paper's original environment; see the
+baseline reproduction notes above. The notebook's code cells compile locally. Local Git fixtures checked fresh
+cloning, default checkout reuse, fast-forward updates, refusal to update a dirty
+checkout, and preservation of existing non-Git folders. The Git-based notebook
+workflow has not been run end to end on Colab as part of this update.
+
+Official extension instructions (checked 2026-11-15):
+[User Guide](https://github.com/googlecolab/colab-vscode/wiki/User-Guide).
 
 ## Verification and references
 
+On 2026-11-15 the Ubuntu CLI reused an existing T4 runtime, synced source, installed
+the isolated environment and passed synthetic GPU inference with shape
+`(1, 30, 224, 224)`. Python was 3.10.22, PyTorch 2.0.1+cu118, MMCV 2.0.1,
+MMEngine 0.8.4 and MMSegmentation 1.1.1. Prepared ADE20K/PC59 validation data was
+cached under `/content/naclip_data`. Fixed 32-image subsets (seed 42) completed
+without PAMR failures: ADE20K 15.65 subset mIoU, PC59 30.14 subset mIoU. These are
+development measurements, not full benchmark results. Their predictions,
+comparisons, timing and provenance are under Drive's
+`NACLIP-results/baseline-2026-11-15/{ade20k,pc59}_subset`.
+
+The completed full PC59 summary reported 5,105 images, 38.36 mIoU, zero PAMR
+failures, and `baseline_valid=true`, with evaluation taking 2,164.10 seconds.
+The full ADE20K run reported 2,000 images, 19.06 mIoU, and seven PAMR failures
+(`baseline_valid=false`). These measurements used the earlier uploaded-source
+workflow; they do not validate the new Git-based initialization.
+
 On 2026-11-07 the notebook workflow passed dependency imports and synthetic GPU
 inference on Tesla T4, producing shape `(1, 30, 224, 224)`. NACLIP is training-free.
-This checks execution, not accuracy. The Ubuntu CLI workflow was prepared and
-checked locally on Windows; Google login, allocation, upload, and execution still
-need an end-to-end check after switching to Ubuntu. No dataset benchmark was run.
+This checks execution, not accuracy. The Ubuntu CLI workflow was initially
+prepared and checked locally on Windows; see the 2026-11-15 verification above
+for Ubuntu execution. No dataset benchmark was run during the original check.
 Local validation: four transfer/error-handling tests, Bash syntax checking, and
 Python/notebook syntax checking passed. To rerun the local tests:
 

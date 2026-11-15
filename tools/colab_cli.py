@@ -14,7 +14,7 @@ REMOTE = '/content/NACLIP'
 REMOTE_PYTHON = '/content/naclip-env/bin/python'
 # Explicit source roots prevent accidental uploads of runtime data or secrets.
 SOURCE_DIRS = {'clip', 'configs', 'prompts', 'tools'}
-ROOT_FILES = {'AGENTS.md', 'COLAB.md', 'README.md', 'LICENSE', '.gitignore',
+ROOT_FILES = {'AGENTS.md', 'COLAB.md', 'user_guide.md', 'README.md', 'LICENSE', '.gitignore',
               'colab_naclip.ipynb', 'custom_datasets.py', 'eval.py', 'naclip.py',
               'pamr.py', 'test_all.sh'}
 
@@ -92,11 +92,11 @@ with subprocess.Popen({command!r}, cwd={REMOTE!r}, stdout=subprocess.PIPE,
 '''
 
 
-def run_remote_code(cli_command, session, code):
+def run_remote_code(cli_command, session, code, timeout=600):
     # Some CLI releases return zero even when a kernel cell raises. Require a
     # unique marker reached only after the entire remote cell succeeds.
     marker = 'NACLIP_COMPLETE_' + uuid.uuid4().hex
-    command = [*cli_command, 'exec', '-s', session, '--timeout', '600']
+    command = [*cli_command, 'exec', '-s', session, '--timeout', str(timeout)]
     completed = False
     with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, text=True, encoding='utf-8',
@@ -116,12 +116,17 @@ def run_remote_code(cli_command, session, code):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['sessions', 'new', 'sync', 'setup', 'smoke', 'eval'])
+    parser.add_argument('action', choices=['sessions', 'new', 'sync', 'setup', 'smoke', 'eval', 'prepare-data', 'baseline'])
     parser.add_argument('--session', default='naclip')
     parser.add_argument('--dry-run', action='store_true', help='List sync files without connecting')
     parser.add_argument('--config', default='configs/cfg_voc21.py')
     parser.add_argument('--data-root')
     parser.add_argument('--work-dir')
+    parser.add_argument('--timeout', type=int, help='Remote execution limit in seconds')
+    parser.add_argument('--dataset', choices=['ade20k', 'pc59'])
+    parser.add_argument('--stage', choices=['subset', 'full'])
+    parser.add_argument('--subset-size', type=int, default=32)
+    parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
     if args.dry_run:
         if args.action != 'sync':
@@ -129,8 +134,10 @@ def main():
         for name, _ in source_files():
             print(name)
         return
-    if args.action == 'eval' and (not args.data_root or not args.work_dir):
-        parser.error('eval requires --data-root and --work-dir (remote Linux paths)')
+    if args.action in {'eval', 'baseline'} and (not args.data_root or not args.work_dir):
+        parser.error(f'{args.action} requires --data-root and --work-dir (remote Linux paths)')
+    if args.action == 'baseline' and (not args.dataset or not args.stage):
+        parser.error('baseline requires --dataset and --stage')
     if sys.platform != 'linux':
         parser.error('Run this workflow on Ubuntu. You can preview sync with --dry-run here.')
     local_cli = ROOT / '.colab-cli/bin/colab'
@@ -142,7 +149,9 @@ def main():
         subprocess.run([cli, *command], input=code, text=True, check=True)
 
     def execute(code):
-        run_remote_code([cli], args.session, code)
+        default_timeout = {'prepare-data': 7200, 'baseline': 43200}.get(args.action, 600)
+        timeout = args.timeout if args.timeout is not None else default_timeout
+        run_remote_code([cli], args.session, code, timeout=timeout)
 
     if args.action == 'sessions':
         call('sessions')
@@ -163,6 +172,16 @@ def main():
             command = ['python3', '-u', 'tools/colab_setup.py']
         elif args.action == 'smoke':
             command = [REMOTE_PYTHON, '-u', 'tools/colab_smoke.py']
+        elif args.action == 'prepare-data':
+            # CPU preprocessing uses Colab's existing scientific Python stack.
+            command = ['python3', '-u', 'tools/prepare_datasets.py']
+            if args.data_root:
+                command += ['--data-root', args.data_root]
+        elif args.action == 'baseline':
+            command = [REMOTE_PYTHON, '-u', 'tools/run_baseline.py',
+                       '--dataset', args.dataset, '--stage', args.stage,
+                       '--data-root', args.data_root, '--work-dir', args.work_dir,
+                       '--subset-size', str(args.subset_size), '--seed', str(args.seed)]
         else:
             command = [REMOTE_PYTHON, '-u', 'tools/colab_eval.py', '--config', args.config,
                        '--data-root', args.data_root, '--work-dir', args.work_dir]
