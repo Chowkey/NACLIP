@@ -2,10 +2,10 @@
 
 The notebook is currently preset for the requested **PC59 guided full run**
 (tau 0.33, temperature 0.10, PAMR off). Select the existing T4 kernel, run
-initialization, then the **PC59 guided full validation** cell. Its initialization
-uses `SOURCE_MODE='synced'` and verifies the proposal source already synced to
-the runtime; those local changes have not been pushed to GitHub. Set
-`SOURCE_MODE='github'` to use the clone/update workflow described below.
+initialization, then the **PC59 guided full validation** cell. Initialization
+defaults to `SOURCE_MODE='github'` and clones the current pushed source on a fresh
+runtime. Choose `SOURCE_MODE='synced'` only after explicitly syncing source to
+that runtime.
 This run writes to `NACLIP-results/guided/pc59_guided_full_tau0p33_temp0p10_<timestamp>`
 in Drive, with an automatically updated Markdown results report and console log
 beside the folder. See [experiment tracker](ImprovementsIdea/ExperimentResults.md).
@@ -151,6 +151,8 @@ After setup, `baseline` evaluates `--condition fixed` by default: original
 Gaussian bias with **PAMR disabled**. `guided` and `none` also disable PAMR;
 `upstream` is an explicit legacy mode retaining the original PAMR defaults.
 The underlying model default outside this runner remains unchanged.
+
+The experimental overlap-calibration mode is off by default. Use `--window-calibration disagreement` to enable it (strength 0.5, confidence power 1.0); compare it on the same seed and subset with PAMR disabled. The ADE20K paired-pilot cell in `colab_naclip.ipynb` runs standard and calibrated modes on identical selected image IDs and records both summaries.
 
 All conditions report overall mIoU plus boundary and interior accuracy. The
 boundary band uses both sides of valid horizontal/vertical label transitions,

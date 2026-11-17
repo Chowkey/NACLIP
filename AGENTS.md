@@ -1,12 +1,13 @@
 # Working on NACLIP
 
 Current notebook preset: the user requested PC59 full guided evaluation through
-`colab_naclip.ipynb`, with tau=0.33, temperature=0.10, and PAMR off. The notebook
-uses `SOURCE_MODE='synced'` to verify and reuse the unpushed proposal source on
-the current runtime. Its `github` mode retains the clone/update workflow below.
-Keep live evaluation in the notebook for this request; do not launch a duplicate
-CLI evaluation. The separate tracker is `ImprovementsIdea/ExperimentResults.md`;
-each notebook run also writes its own Markdown report beside its named Drive folder.
+`colab_naclip.ipynb`, with tau=0.33, temperature=0.10, and PAMR off. The current
+baseline source is committed and pushed to `main`; the notebook defaults to
+`SOURCE_MODE='github'` so a fresh runtime clones it. Use `synced` only after
+explicitly syncing local source into the selected runtime. Keep live evaluation
+in the notebook for this request; do not launch a duplicate CLI evaluation. The
+separate tracker is `ImprovementsIdea/ExperimentResults.md`; each notebook run
+also writes its own Markdown report beside its named Drive folder.
 
 Read `COLAB.md` before running GPU work. The user's intended workflow is local
 editing on Ubuntu (including agent edits), with GPU execution on Google Colab.

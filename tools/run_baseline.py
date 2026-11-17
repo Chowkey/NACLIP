@@ -39,6 +39,10 @@ def main():
     parser.add_argument('--guidance-tau', type=float)
     parser.add_argument('--guidance-temperature', type=float)
     parser.add_argument('--guidance-epsilon', type=float, default=1e-6)
+    parser.add_argument('--window-calibration', choices=['off', 'disagreement'], default='off',
+                        help='Confidence-weighted overlap correction driven by crop disagreement')
+    parser.add_argument('--window-calibration-strength', type=float, default=0.5)
+    parser.add_argument('--window-confidence-power', type=float, default=1.0)
     args = parser.parse_args()
     if args.condition == 'guided' and (args.guidance_tau is None or args.guidance_temperature is None):
         parser.error('guided requires explicit --guidance-tau and --guidance-temperature')
@@ -48,6 +52,13 @@ def main():
         parser.error('--guidance-temperature must be finite and positive')
     if not math.isfinite(args.guidance_epsilon) or args.guidance_epsilon <= 0:
         parser.error('--guidance-epsilon must be finite and positive')
+    if (not math.isfinite(args.window_calibration_strength)
+            or not 0.0 <= args.window_calibration_strength <= 1.0):
+        parser.error('--window-calibration-strength must be finite and within [0, 1]')
+    if not math.isfinite(args.window_confidence_power) or args.window_confidence_power <= 0.0:
+        parser.error('--window-confidence-power must be finite and positive')
+    if args.window_calibration != 'off' and args.condition == 'upstream':
+        parser.error('window calibration requires a proposal condition with PAMR disabled')
     if args.subset_size < 2:
         parser.error('--subset-size must be at least 2 for timing statistics')
     if not args.data_root.is_dir():
@@ -81,7 +92,10 @@ def main():
                          pamr_steps=0, spatial_bias=args.condition,
                          guidance_tau=args.guidance_tau if args.guidance_tau is not None else 0.,
                          guidance_temperature=args.guidance_temperature if args.guidance_temperature is not None else 1.,
-                         guidance_epsilon=args.guidance_epsilon)
+                         guidance_epsilon=args.guidance_epsilon,
+                         window_calibration=args.window_calibration == 'disagreement',
+                         window_calibration_strength=args.window_calibration_strength,
+                         window_confidence_power=args.window_confidence_power)
     cfg.test_evaluator = [cfg.test_evaluator,
                           dict(type='BoundaryAccuracy', radius=3, ignore_index=255,
                                prefix='localization')]
@@ -128,6 +142,9 @@ def main():
                     boundary_definition='both sides of valid horizontal/vertical class transitions; Euclidean distance <= 3 px on original annotation grid; ignore=255; pooled pixel accuracy in percent',
                     interior_definition='valid pixels outside the same 3-pixel boundary band',
                     guidance_feature_source='raw penultimate visual block output before final-block layer norm; excludes CLS',
+                    window_calibration=args.window_calibration,
+                    window_calibration_strength=args.window_calibration_strength,
+                    window_confidence_power=args.window_confidence_power,
                     proposal_protocol=args.condition != 'upstream')
     write_json(args.work_dir / 'manifest.json', manifest)
     timings = []
@@ -194,7 +211,10 @@ def main():
                                       spatial_bias=model.net.visual.spatial_bias,
                                       guidance_tau=model.net.visual.guidance_tau,
                                       guidance_temperature=model.net.visual.guidance_temperature,
-                                      guidance_epsilon=model.net.visual.guidance_epsilon)
+                                      guidance_epsilon=model.net.visual.guidance_epsilon,
+                                      window_calibration=model.window_calibration,
+                                      window_calibration_strength=model.window_calibration_strength,
+                                      window_confidence_power=model.window_confidence_power)
     write_json(args.work_dir / 'manifest.json', manifest)
     write_json(args.work_dir / 'classes.json', runner.test_dataloader.dataset.metainfo['classes'])
     torch.cuda.reset_peak_memory_stats()

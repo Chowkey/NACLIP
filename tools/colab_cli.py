@@ -131,6 +131,9 @@ def main():
     parser.add_argument('--guidance-tau', type=float)
     parser.add_argument('--guidance-temperature', type=float)
     parser.add_argument('--guidance-epsilon', type=float, default=1e-6)
+    parser.add_argument('--window-calibration', choices=['off', 'disagreement'], default='off')
+    parser.add_argument('--window-calibration-strength', type=float, default=0.5)
+    parser.add_argument('--window-confidence-power', type=float, default=1.0)
     args = parser.parse_args()
     if args.dry_run:
         if args.action != 'sync':
@@ -188,7 +191,10 @@ def main():
                        '--dataset', args.dataset, '--stage', args.stage,
                        '--data-root', args.data_root, '--work-dir', args.work_dir,
                        '--subset-size', str(args.subset_size), '--seed', str(args.seed),
-                       '--condition', args.condition, '--guidance-epsilon', str(args.guidance_epsilon)]
+                       '--condition', args.condition, '--guidance-epsilon', str(args.guidance_epsilon),
+                       '--window-calibration', args.window_calibration,
+                       '--window-calibration-strength', str(args.window_calibration_strength),
+                       '--window-confidence-power', str(args.window_confidence_power)]
             if args.guidance_tau is not None:
                 command += ['--guidance-tau', str(args.guidance_tau)]
             if args.guidance_temperature is not None:

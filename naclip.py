@@ -1,4 +1,5 @@
 import logging
+import math
 import sys
 
 import torch
@@ -21,7 +22,8 @@ class NACLIP(BaseSegmentor):
                  arch='reduced', attn_strategy='naclip', gaussian_std=5., pamr_steps=10, pamr_stride=(8, 16),
                  prob_thd=0.0, logit_scale=40, slide_stride=112, slide_crop=224,
                  spatial_bias='fixed', guidance_tau=0.0, guidance_temperature=1.0,
-                 guidance_epsilon=1e-6):
+                 guidance_epsilon=1e-6, window_calibration=False,
+                 window_calibration_strength=0.5, window_confidence_power=1.0):
 
         data_preprocessor = SegDataPreProcessor(mean=[122.771, 116.746, 104.094], std=[68.501, 66.632, 70.323], rgb_to_bgr=True)
         super().__init__(data_preprocessor=data_preprocessor)
@@ -50,6 +52,13 @@ class NACLIP(BaseSegmentor):
         self.prob_thd = prob_thd
         self.slide_stride = slide_stride
         self.slide_crop = slide_crop
+        if not math.isfinite(window_calibration_strength) or not 0.0 <= window_calibration_strength <= 1.0:
+            raise ValueError('window_calibration_strength must be finite and within [0, 1]')
+        if not math.isfinite(window_confidence_power) or window_confidence_power <= 0.0:
+            raise ValueError('window_confidence_power must be finite and positive')
+        self.window_calibration = bool(window_calibration)
+        self.window_calibration_strength = float(window_calibration_strength)
+        self.window_confidence_power = float(window_confidence_power)
         self.align_corners = False
         self.pamr = PAMR(pamr_steps, dilations=pamr_stride).to(device) if pamr_steps > 0 else None
 
@@ -92,6 +101,11 @@ class NACLIP(BaseSegmentor):
         w_grids = max(w_img - w_crop + w_stride - 1, 0) // w_stride + 1
         preds = img.new_zeros((batch_size, out_channels, h_img, w_img))
         count_mat = img.new_zeros((batch_size, 1, h_img, w_img))
+        if self.window_calibration:
+            prob_sum = torch.zeros((batch_size, out_channels, h_img, w_img), device=img.device, dtype=torch.float32)
+            confidence_prob_sum = torch.zeros_like(prob_sum)
+            confidence_sum = torch.zeros((batch_size, 1, h_img, w_img), device=img.device, dtype=torch.float32)
+            entropy_sum = torch.zeros_like(confidence_sum)
         for h_idx in range(h_grids):
             for w_idx in range(w_grids):
                 y1 = h_idx * h_stride
@@ -102,6 +116,21 @@ class NACLIP(BaseSegmentor):
                 x1 = max(x2 - w_crop, 0)
                 crop_img = img[:, :, y1:y2, x1:x2]
                 crop_seg_logit = self.forward_feature(crop_img)
+                if self.window_calibration:
+                    crop_prob = torch.softmax(crop_seg_logit.float() * self.logit_scale, dim=1)
+                    entropy = -(crop_prob * crop_prob.clamp_min(1e-8).log()).sum(dim=1, keepdim=True)
+                    log_num_classes = math.log(max(out_channels, 2))
+                    confidence = (1.0 - entropy / log_num_classes).clamp_(0.0, 1.0)
+                    confidence_weight = confidence.clamp_min(1e-6).pow(self.window_confidence_power)
+
+                    def place_on_image(value):
+                        return nn.functional.pad(
+                            value, (int(x1), int(w_img - x2), int(y1), int(h_img - y2)))
+
+                    prob_sum += place_on_image(crop_prob)
+                    confidence_prob_sum += place_on_image(crop_prob * confidence_weight)
+                    confidence_sum += place_on_image(confidence_weight)
+                    entropy_sum += place_on_image(entropy)
                 preds += nn.functional.pad(crop_seg_logit,
                                            (int(x1), int(preds.shape[3] - x2), int(y1), int(preds.shape[2] - y2)))
 
@@ -109,6 +138,24 @@ class NACLIP(BaseSegmentor):
         assert (count_mat == 0).sum() == 0
 
         logits = preds / count_mat
+        if self.window_calibration:
+            mean_prob = prob_sum / count_mat
+            weighted_prob = confidence_prob_sum / confidence_sum.clamp_min(1e-6)
+            baseline_prob = torch.softmax(logits.float() * self.logit_scale, dim=1)
+
+            # For a set of crop predictions, JS divergence is H(mean(p)) - mean(H(p)).
+            entropy_of_mean = -(mean_prob * mean_prob.clamp_min(1e-8).log()).sum(dim=1, keepdim=True)
+            mean_entropy = entropy_sum / count_mat
+            js_divergence = (entropy_of_mean - mean_entropy).clamp_min_(0.0)
+            log_num_crops = count_mat.clamp_min(2.0).log()
+            max_js = torch.minimum(log_num_crops, logits.new_tensor(math.log(max(out_channels, 2))).float())
+            disagreement = (js_divergence / max_js.clamp_min(1e-6)).clamp_(0.0, 1.0)
+            correction = disagreement * self.window_calibration_strength
+            calibrated_prob = baseline_prob * (1.0 - correction) + weighted_prob * correction
+
+            # postprocess_result multiplies incoming scores by logit_scale before softmax.
+            # This converts the calibrated probabilities back to compatible scores.
+            return calibrated_prob.clamp_min(1e-8).log() / self.logit_scale
         return logits
 
     def predict(self, inputs, data_samples):

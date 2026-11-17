@@ -3,8 +3,9 @@
 For the currently requested PC59 guided full run, open `colab_naclip.ipynb`,
 select the existing T4 kernel, run initialization, then the **PC59 guided full
 validation** cell. It is preset to tau=0.33, temperature=0.10 and PAMR off.
-Initialization uses `SOURCE_MODE='synced'` for the current unpushed proposal code;
-choose `github` for the clone workflow below. Results go into a named `guided`
+Initialization uses `SOURCE_MODE='github'` to clone the current pushed source on a
+fresh runtime. Choose `synced` only after explicitly syncing local source to that
+runtime. Results go into a named `guided`
 folder in Drive, with a separate Markdown report and console log beside it.
 See [ExperimentResults.md](ImprovementsIdea/ExperimentResults.md).
 
@@ -231,6 +232,8 @@ For ADE20K, use `--dataset ade20k`, data root `/content/naclip_data/ADEChallenge
 **The runner now defaults to the proposal's `fixed` condition with PAMR disabled.** Use `--condition fixed`, `guided`, or `none` for the matched proposal comparison. `--condition upstream` retains the old PAMR-enabled model defaults. Historical 19.06/38.36 scores came from PAMR-enabled runs and must not be used as the PAMR-off proposal baseline.
 
 For guided runs, add `--condition guided --guidance-tau VALUE --guidance-temperature VALUE`; both values must be chosen explicitly before evaluation and kept the same across datasets. In the notebook, set `CONDITION`, `GUIDANCE_TAU`, and `GUIDANCE_TEMPERATURE` instead. Keep dataset settings and seed identical, and save each condition to a new empty output folder.
+
+The experimental overlap-calibration mode is off by default. To compare it with the standard sliding-window merge, use the notebook cell **ADE20K overlap calibration paired pilot** after syncing source; it runs the same seed-42 ADE20K subset in both modes and checks the selected image IDs match. For a standalone run, add `--window-calibration disagreement` (strength defaults to 0.5; confidence power defaults to 1.0). Keep PAMR disabled and interpret subset differences as exploratory only.
 
 `summary.json` includes `metrics['localization/boundary_accuracy']`, `metrics['localization/interior_accuracy']`, their pixel counts, and overall `mIoU`. Boundary accuracy uses a 3-pixel Euclidean ground-truth band at original resolution and excludes ignored pixels. Compare guided minus fixed boundary accuracy in percentage points. `null` means the region had no eligible pixels.
 

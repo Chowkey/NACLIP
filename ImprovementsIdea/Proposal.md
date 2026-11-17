@@ -86,6 +86,28 @@ Keep key-key attention and the same inference/scoring settings for both variants
 - **Exponential distance bias:** replace the Gaussian with $B_{ij}=\exp(-r_{ij}/\rho)$, where $r_{ij}=\lVert p_i-p_j\rVert_2$. Choose $\rho$ so the exponential and Gaussian bonuses reach half their maximum at the same distance. Test whether distance-decay shape alone improves localization.
 - **Radius-limited attention:** allow attention only to the patch itself and patches within a predefined radius $R$. Retain the original key-key logits inside the radius and set logits outside it to $-\infty$ before softmax. Test whether restricting information exchange improves localization.
 
+## Additional exploratory direction: overlap-aware window calibration
+
+This is implemented as an optional output-stage mode in `naclip.py` and `tools/run_baseline.py`; it is off by default. NACLIP processes overlapping crops independently and normally averages their logits. The new mode also measures how much their class distributions disagree at each pixel, then adjusts only those pixels toward a confidence-weighted crop consensus.
+
+For each image pixel $x$, let $z_w(x)$ be the logits from crop $w$ covering it, and $p_w(x)=\operatorname{softmax}(s z_w(x))$, where $s$ is NACLIP's configured logit scale (40 in the pilot). The standard merged prediction is $p_0(x)=\operatorname{softmax}(s\frac{1}{|W_x|}\sum_w z_w(x))$. Define the unweighted probability mean $\bar p(x)=\frac{1}{|W_x|}\sum_w p_w(x)$ and normalized disagreement
+
+$$
+d(x)=\operatorname{clip}_{[0,1]}\left(\frac{H(\bar p(x))-\frac{1}{|W_x|}\sum_w H(p_w(x))}{\min(\log |W_x|,\log C)}\right),
+$$
+
+where $H$ is categorical entropy and $C$ is the number of text queries. This is normalized multi-crop Jensen-Shannon divergence. Assign each crop confidence $q_w(x)=\max(1-H(p_w(x))/\log C,\epsilon)^\gamma$ and form $p_c(x)=\frac{\sum_w q_w(x)p_w(x)}{\sum_w q_w(x)}$. The output is
+
+$$
+p_{\mathrm{out}}(x)=(1-\lambda d(x))p_0(x)+\lambda d(x)p_c(x),
+$$
+
+with default $\lambda=0.5$ and $\gamma=1$. One-crop pixels have zero disagreement and remain equal to the standard merged prediction. The fixed baseline path is unchanged when this mode is disabled. It requires PAMR off in the controlled comparison.
+
+**Relation to prior work and novelty status:** GLA-CLIP identifies the same general problem—semantic discrepancies between independently processed sliding windows—and addresses it inside attention by extending key/value context across windows, adding proxy anchors, and applying scale-aware normalization ([Lee et al., CVPR 2026](https://openaccess.thecvf.com/content/CVPR2026/papers/Lee_Looking_Beyond_the_Window_Global-Local_Aligned_CLIP_for_Training-free_Open-Vocabulary_CVPR_2026_paper.pdf)). This implementation instead reuses predictions from the existing crops after each crop has run; it adds no global cross-window attention or vision encoder. The mechanism and resource cost differ, but this is not by itself evidence of novelty; related output-fusion methods must be checked before making a novelty claim.
+
+**Pilot protocol:** compare ADE20K fixed Gaussian with and without overlap calibration on the same 32-image subset, seed, and preprocessing. Report matched image IDs, mIoU, boundary/interior accuracy, validity, and runtime. Only consider a full-split comparison if the pilot is valid and shows a repeatable gain without meaningful regression. Keep PAMR disabled.
+
 ## Execution plan and intended contribution
 
 1. Establish the fixed Gaussian and no-bias conditions with **PAMR disabled**; verify boundary-band generation and scoring.
