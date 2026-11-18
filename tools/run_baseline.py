@@ -219,7 +219,8 @@ def main():
                                       window_calibration=model.window_calibration,
                                       window_calibration_strength=model.window_calibration_strength,
                                       window_confidence_power=model.window_confidence_power,
-                                      patch_phase_ensemble=model.patch_phase_ensemble)
+                                      patch_phase_ensemble=model.patch_phase_ensemble,
+                                      patch_phase_offsets_px=list(model.patch_phase_offsets))
     write_json(args.work_dir / 'manifest.json', manifest)
     write_json(args.work_dir / 'classes.json', runner.test_dataloader.dataset.metainfo['classes'])
     torch.cuda.reset_peak_memory_stats()
