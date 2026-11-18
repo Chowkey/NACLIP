@@ -2,6 +2,18 @@
 
 Recorded on 2026-11-16 (Asia/Ho_Chi_Minh).
 
+## ADE20K overlap-calibration paired pilot
+
+On a matched 32-image ADE20K subset (seed 42), overlap-aware window calibration produced nearly unchanged scores relative to standard sliding-window merging. Both conditions completed all images and used the same image IDs. PAMR was disabled; guided spatial bias used $\tau=0.33$ and temperature $0.10$ in both conditions.
+
+| Metric | Standard merge | Overlap calibration | Calibrated minus standard |
+| --- | ---: | ---: | ---: |
+| mIoU (%) | 13.73 | 13.72 | -0.01 |
+| Boundary accuracy (%) | 27.6264 | 27.6353 | +0.0089 |
+| Interior accuracy (%) | 51.8792 | 51.8740 | -0.0052 |
+
+This pilot shows no material change in these aggregate metrics; the tiny boundary increase alone is not evidence of a reliable gain. It is a subset result and does not establish full-validation performance. Run directory on Drive: `/content/drive/MyDrive/NACLIP-results/window-calibration/ade20k_paired_seed42_20261118T073454609223Z`.
+
 ## PC59 matched full-validation comparison
 
 **Both fixed and guided completed successfully on all 5,105 images, with PAMR disabled. At tau=0.33 and temperature=0.10, guided did not improve the fixed baseline in this evaluation.**

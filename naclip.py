@@ -23,7 +23,8 @@ class NACLIP(BaseSegmentor):
                  prob_thd=0.0, logit_scale=40, slide_stride=112, slide_crop=224,
                  spatial_bias='fixed', guidance_tau=0.0, guidance_temperature=1.0,
                  guidance_epsilon=1e-6, window_calibration=False,
-                 window_calibration_strength=0.5, window_confidence_power=1.0):
+                 window_calibration_strength=0.5, window_confidence_power=1.0,
+                 patch_phase_ensemble='off'):
 
         data_preprocessor = SegDataPreProcessor(mean=[122.771, 116.746, 104.094], std=[68.501, 66.632, 70.323], rgb_to_bgr=True)
         super().__init__(data_preprocessor=data_preprocessor)
@@ -59,6 +60,9 @@ class NACLIP(BaseSegmentor):
         self.window_calibration = bool(window_calibration)
         self.window_calibration_strength = float(window_calibration_strength)
         self.window_confidence_power = float(window_confidence_power)
+        if patch_phase_ensemble not in {'off', 'two', 'four'}:
+            raise ValueError("patch_phase_ensemble must be one of: 'off', 'two', 'four'")
+        self.patch_phase_ensemble = patch_phase_ensemble
         self.align_corners = False
         self.pamr = PAMR(pamr_steps, dilations=pamr_stride).to(device) if pamr_steps > 0 else None
 
@@ -158,6 +162,39 @@ class NACLIP(BaseSegmentor):
             return calibrated_prob.clamp_min(1e-8).log() / self.logit_scale
         return logits
 
+    def forward_patch_phases(self, img):
+        """Average logits from centered and half-patch-shifted image grids."""
+        if self.patch_phase_ensemble == 'off':
+            return (self.forward_slide(img, self.slide_stride, self.slide_crop)
+                    if self.slide_crop > 0 else self.forward_feature(img))
+
+        patch_size = self.net.visual.patch_size
+        half_phase = patch_size // 2
+        if half_phase < 1:
+            raise ValueError('Patch phase ensemble requires a visual patch size of at least 2')
+        offsets = [(0, 0), (half_phase, half_phase)]
+        if self.patch_phase_ensemble == 'four':
+            offsets = [(0, 0), (half_phase, 0), (0, half_phase), (half_phase, half_phase)]
+
+        height, width = img.shape[-2:]
+        phase_logits = []
+        for dx, dy in offsets:
+            if dx == 0 and dy == 0:
+                phase_logits.append(
+                    self.forward_slide(img, self.slide_stride, self.slide_crop)
+                    if self.slide_crop > 0 else self.forward_feature(img))
+                continue
+
+            # Shift image content right/down so the ViT patch grid sees another
+            # phase. Reflection padding avoids introducing a constant border.
+            pad_mode = 'reflect' if width > dx and height > dy else 'replicate'
+            shifted = nn.functional.pad(img, (dx, 0, dy, 0), mode=pad_mode)
+            shifted_logits = (self.forward_slide(shifted, self.slide_stride, self.slide_crop)
+                              if self.slide_crop > 0 else self.forward_feature(shifted))
+            phase_logits.append(shifted_logits[:, :, dy:dy + height, dx:dx + width])
+
+        return torch.stack(phase_logits, dim=0).float().mean(dim=0).to(phase_logits[0].dtype)
+
     def predict(self, inputs, data_samples):
         if data_samples is not None:
             batch_img_metas = [data_sample.metainfo for data_sample in data_samples]
@@ -169,10 +206,7 @@ class NACLIP(BaseSegmentor):
                 padding_size=[0, 0, 0, 0])
             ] * inputs.shape[0]
 
-        if self.slide_crop > 0:
-            seg_logits = self.forward_slide(inputs, self.slide_stride, self.slide_crop)
-        else:
-            seg_logits = self.forward_feature(inputs)
+        seg_logits = self.forward_patch_phases(inputs)
 
         img_size = batch_img_metas[0]['ori_shape']
         seg_logits = nn.functional.interpolate(seg_logits, size=img_size, mode='bilinear', align_corners=self.align_corners)

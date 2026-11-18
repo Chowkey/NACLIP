@@ -43,6 +43,8 @@ def main():
                         help='Confidence-weighted overlap correction driven by crop disagreement')
     parser.add_argument('--window-calibration-strength', type=float, default=0.5)
     parser.add_argument('--window-confidence-power', type=float, default=1.0)
+    parser.add_argument('--patch-phase-ensemble', choices=['off', 'two', 'four'], default='off',
+                        help='Average logits over canonical and half-patch-shifted image grids')
     args = parser.parse_args()
     if args.condition == 'guided' and (args.guidance_tau is None or args.guidance_temperature is None):
         parser.error('guided requires explicit --guidance-tau and --guidance-temperature')
@@ -96,6 +98,7 @@ def main():
                          window_calibration=args.window_calibration == 'disagreement',
                          window_calibration_strength=args.window_calibration_strength,
                          window_confidence_power=args.window_confidence_power)
+    cfg.model.patch_phase_ensemble = args.patch_phase_ensemble
     cfg.test_evaluator = [cfg.test_evaluator,
                           dict(type='BoundaryAccuracy', radius=3, ignore_index=255,
                                prefix='localization')]
@@ -145,6 +148,7 @@ def main():
                     window_calibration=args.window_calibration,
                     window_calibration_strength=args.window_calibration_strength,
                     window_confidence_power=args.window_confidence_power,
+                    patch_phase_ensemble=args.patch_phase_ensemble,
                     proposal_protocol=args.condition != 'upstream')
     write_json(args.work_dir / 'manifest.json', manifest)
     timings = []
@@ -214,7 +218,8 @@ def main():
                                       guidance_epsilon=model.net.visual.guidance_epsilon,
                                       window_calibration=model.window_calibration,
                                       window_calibration_strength=model.window_calibration_strength,
-                                      window_confidence_power=model.window_confidence_power)
+                                      window_confidence_power=model.window_confidence_power,
+                                      patch_phase_ensemble=model.patch_phase_ensemble)
     write_json(args.work_dir / 'manifest.json', manifest)
     write_json(args.work_dir / 'classes.json', runner.test_dataloader.dataset.metainfo['classes'])
     torch.cuda.reset_peak_memory_stats()

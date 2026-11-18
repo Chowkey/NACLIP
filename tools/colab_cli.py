@@ -134,6 +134,7 @@ def main():
     parser.add_argument('--window-calibration', choices=['off', 'disagreement'], default='off')
     parser.add_argument('--window-calibration-strength', type=float, default=0.5)
     parser.add_argument('--window-confidence-power', type=float, default=1.0)
+    parser.add_argument('--patch-phase-ensemble', choices=['off', 'two', 'four'], default='off')
     args = parser.parse_args()
     if args.dry_run:
         if args.action != 'sync':
@@ -194,7 +195,8 @@ def main():
                        '--condition', args.condition, '--guidance-epsilon', str(args.guidance_epsilon),
                        '--window-calibration', args.window_calibration,
                        '--window-calibration-strength', str(args.window_calibration_strength),
-                       '--window-confidence-power', str(args.window_confidence_power)]
+                       '--window-confidence-power', str(args.window_confidence_power),
+                       '--patch-phase-ensemble', args.patch_phase_ensemble]
             if args.guidance_tau is not None:
                 command += ['--guidance-tau', str(args.guidance_tau)]
             if args.guidance_temperature is not None:

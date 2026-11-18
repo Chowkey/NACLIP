@@ -108,6 +108,23 @@ with default $\lambda=0.5$ and $\gamma=1$. One-crop pixels have zero disagreemen
 
 **Pilot protocol:** compare ADE20K fixed Gaussian with and without overlap calibration on the same 32-image subset, seed, and preprocessing. Report matched image IDs, mIoU, boundary/interior accuracy, validity, and runtime. Only consider a full-split comparison if the pilot is valid and shows a repeatable gain without meaningful regression. Keep PAMR disabled.
 
+## Additional candidate: patch-grid phase marginalization
+
+The current sliding-window inference always presents each crop to ViT-B/16 with the same 16-pixel patch-grid alignment. As a result, a small translation of the crop origin can change which pixels are grouped into patch tokens, potentially changing predictions around small objects and class boundaries. Test whether averaging predictions from a small set of shifted patch-grid phases reduces this sensitivity.
+
+For a phase offset $(\delta_x,\delta_y)$, pad/shift the input image by that offset, run the unchanged NACLIP sliding-window inference, then inverse-align the output logits to the original image coordinates. Average aligned logits over the canonical phase and three half-patch phases:
+
+$$
+\mathcal{P}=\{(0,0),(8,0),(0,8),(8,8)\},\qquad
+z_{\mathrm{phase}}(x)=\frac{1}{|\mathcal{P}|}\sum_{\delta\in\mathcal{P}}z_\delta(x).
+$$
+
+Use reflection padding at image edges and crop back to the original extent after inverse alignment. Do not change the text prompts, spatial-bias condition, image scale, or other inference settings. This is a test-time ensemble of the same frozen model; it requires up to four image-encoder passes and is expected to increase inference time accordingly. A two-phase pilot can first check whether any stability/accuracy signal justifies the full four-phase run.
+
+**Prior-work check and novelty status:** Ercan's 2026 preprint *Phase Marginalization for Patch-Grid Instability in Vision Transformers* studies phase averaging for dense prediction and reports segmentation experiments, so phase marginalization itself is not a new claim. The potential project contribution is a controlled transfer/evaluation on training-free open-vocabulary NACLIP, including its overlapping-crop inference and boundary metrics. This is an adaptation hypothesis, not an established improvement; related preprints and publication status should be rechecked before making a novelty claim ([paper](https://arxiv.org/abs/2606.08132)). NACLIP's own method defines the relevant training-free, patch-attention baseline ([WACV 2025 paper](https://openaccess.thecvf.com/content/WACV2025/papers/Hajimiri_Pay_Attention_to_Your_Neighbours_Training-Free_Open-Vocabulary_Semantic_Segmentation_WACV_2025_paper.pdf)).
+
+**Pilot protocol:** on a fixed, seeded ADE20K subset, compare the existing single-phase baseline against two phases first, then four if useful. Keep PAMR and the chosen spatial-bias mode identical. Verify identical image IDs, inverse alignment, and valid pixels; report mIoU, boundary accuracy, interior accuracy, prediction disagreement across phases, wall time, and peak memory. Advance to the full validation split only if the pilot improves boundary accuracy without a meaningful mIoU regression and the extra inference cost is acceptable.
+
 ## Execution plan and intended contribution
 
 1. Establish the fixed Gaussian and no-bias conditions with **PAMR disabled**; verify boundary-band generation and scoring.
