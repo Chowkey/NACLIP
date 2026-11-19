@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .spatial_bias import feature_guided_bias, validate_guidance
+from .spatial_bias import entropy_guided_bias, feature_guided_bias, validate_guidance
 
 
 class LayerNorm(nn.LayerNorm):
@@ -96,10 +96,10 @@ class VisionTransformer(nn.Module):
         assert attn_strategy in ['naclip', 'nonly', 'kk', 'csa', 'vanilla']
         assert attn_strategy != 'csa' or arch == 'vanilla'
         assert gaussian_std > 0 or attn_strategy not in ['naclip', 'nonly']
-        if spatial_bias not in ['fixed', 'guided', 'none']:
-            raise ValueError('spatial_bias must be fixed, guided, or none')
+        if spatial_bias not in ['fixed', 'guided', 'entropy', 'none']:
+            raise ValueError('spatial_bias must be fixed, guided, entropy, or none')
         if spatial_bias != 'fixed' and attn_strategy != 'naclip':
-            raise ValueError('guided/none spatial bias requires naclip key-key attention')
+            raise ValueError('non-fixed spatial bias requires naclip key-key attention')
         validate_guidance(guidance_tau, guidance_temperature, guidance_epsilon)
         self.arch, self.attn_strategy, self.gaussian_std = arch, attn_strategy, gaussian_std
         self.spatial_bias = spatial_bias
@@ -228,6 +228,8 @@ class VisionTransformer(nn.Module):
                     # q/k/v flatten batch first, then head. Share each image's
                     # gate across its heads without mixing different images.
                     omega = omega.repeat_interleave(num_heads, dim=0)
+                elif self.spatial_bias == 'entropy':
+                    omega = entropy_guided_bias(addition, attn_weights)
             elif self.attn_strategy == 'nonly':
                 attn_weights = torch.zeros((num_heads, num_tokens, num_tokens)).to(x.dtype).to(x.device)
                 omega = addition * (scale * torch.einsum('hop,hPO->hpP', q.norm(dim=2).unsqueeze(1), k.norm(dim=2).unsqueeze(2)).mean().item())
