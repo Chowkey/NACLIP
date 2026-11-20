@@ -125,6 +125,24 @@ Use reflection padding at image edges (replication when the image is too small) 
 
 **Pilot protocol:** on a fixed, seeded ADE20K subset, compare the existing single-phase baseline against two phases first, then four if useful. Keep PAMR and the chosen spatial-bias mode identical. Verify identical image IDs, inverse alignment, and valid pixels; report mIoU, boundary accuracy, interior accuracy, prediction disagreement across phases, wall time, and peak memory. Advance to the full validation split only if the pilot improves boundary accuracy without a meaningful mIoU regression and the extra inference cost is acceptable.
 
+## Additional candidate: query-entropy-gated Gaussian bias
+
+NACLIP currently adds the same Gaussian spatial bonus to every patch query. Test whether this bonus should depend on how diffuse that query's original key-key attention is. Compute the entropy from the patch-to-patch key-key logits **before** adding the Gaussian, excluding the CLS token:
+
+$$
+A_{hij}=\operatorname{softmax}_{j}\left(\frac{k_{hi}^{\top}k_{hj}}{\sqrt{d_h}}\right),\qquad
+u_{hi}=\operatorname{clip}_{[0,1]}\left(\frac{-\sum_j A_{hij}\log(A_{hij}+\epsilon)}{\log N}\right),\qquad
+B_{hij}=u_{hi}G_{ij}.
+$$
+
+Here $h$ indexes attention heads, $i,j$ index image patches, and $N$ is the number of image patches in the crop. Diffuse queries ($u_{hi}$ near one) receive the full Gaussian locality bonus; focused queries receive less. The CLS row and column retain zero spatial bias. This introduces no learned parameters, extra encoder pass, or validation-label tuning. Its hypothesis is that locality is most useful when the pretrained key-key distribution is uncertain, while a concentrated attention row should be allowed to determine its own context.
+
+**Implementation:** the optional `entropy` spatial-bias condition computes normalized entropy from the existing pre-bias key-key logits in float32, then scales each query row of the existing Gaussian matrix. The `fixed`, `guided`, and `none` conditions remain available. Runner summaries record the entropy rule for provenance.
+
+**Prior-work check and novelty status:** NERVE uses entropy to weight attention maps in a diffusion-backed random-walk OVSS method, and discusses limitations of fixed Gaussian neighborhoods ([Mahatha et al., WACV 2026](https://openaccess.thecvf.com/content/WACV2026/papers/Mahatha_NERVE_Neighbourhood__Entropy-Guided_Random-Walk_for_Training_Free_Open-Vocabulary_Segmentation_WACV_2026_paper.pdf)). The proposed test instead uses each NACLIP key-key query's own pre-bias entropy to scale its Gaussian row, with no diffusion backbone or random walk. This is a distinct mechanism in this project, not proof of literature-level novelty; a broader prior-art search is needed before making a novelty claim.
+
+**Pilot protocol:** compare `fixed` against `entropy` on matched seeded 32-image ADE20K and PC59 validation subsets. Keep all inference settings identical, including PAMR off, and verify matching image IDs. Use the proposal's existing boundary accuracy as the primary metric; also report mIoU, pixel accuracy, mean class accuracy, interior accuracy, runtime, and peak GPU memory. The normalized-entropy gate has no tuned threshold. Treat the pilots as development results; run full validation only if the boundary and overall metrics justify it.
+
 ## Execution plan and intended contribution
 
 1. Establish the fixed Gaussian and no-bias conditions with **PAMR disabled**; verify boundary-band generation and scoring.

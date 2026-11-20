@@ -1,6 +1,6 @@
 # Proposal experiment results
 
-Recorded on 2026-11-16 (Asia/Ho_Chi_Minh).
+Initially recorded on 2026-11-16 (Asia/Ho_Chi_Minh); updated on 2026-11-20.
 
 ## ADE20K overlap-calibration paired pilot
 
@@ -13,6 +13,20 @@ On a matched 32-image ADE20K subset (seed 42), overlap-aware window calibration 
 | Interior accuracy (%) | 51.8792 | 51.8740 | -0.0052 |
 
 This pilot shows no material change in these aggregate metrics; the tiny boundary increase alone is not evidence of a reliable gain. It is a subset result and does not establish full-validation performance. Run directory on Drive: `/content/drive/MyDrive/NACLIP-results/window-calibration/ade20k_paired_seed42_20261118T073454609223Z`.
+
+## PC59 overlap-calibration paired pilot
+
+On a matched 32-image PC59 validation subset (seed 42), overlap-disagreement calibration made almost no change relative to standard sliding-window merging. Both runs used guided spatial bias ($\tau=0.33$, temperature $0.10$), PAMR off, and the same image IDs; both summaries were valid.
+
+| Metric | Standard merge | Overlap calibration | Calibrated minus standard |
+| --- | ---: | ---: | ---: |
+| mIoU (%) | 27.37 | 27.36 | -0.01 |
+| Overall pixel accuracy (%) | 57.53 | 57.53 | 0.00 |
+| Mean class accuracy (%) | 57.88 | 57.84 | -0.04 |
+| Boundary accuracy (%) | 38.6925 | 38.7147 | +0.0222 |
+| Interior accuracy (%) | 59.6326 | 59.6344 | +0.0018 |
+
+The tiny boundary increase is not evidence of a reliable gain; aggregate metrics are effectively unchanged in this pilot. The observed runner times were 45.06 seconds for standard merge and 6.75 seconds for calibration, but the runs were sequential and the second may benefit from warm data/cache state, so this is not a controlled speed comparison. Run directory on Drive: `/content/drive/MyDrive/NACLIP-results/window-calibration/pc59_paired_seed42_20261119T141553841782Z`.
 
 ## PC59 matched full-validation comparison
 
