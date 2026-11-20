@@ -30,3 +30,30 @@ def feature_guided_bias(gaussian, features, tau, temperature, epsilon=1e-6):
     bias = gaussian.expand(features.shape[1], -1, -1).clone()
     bias[:, 1:, 1:] *= gate.to(bias.dtype)
     return bias
+
+
+def entropy_guided_bias(gaussian, attention_logits, epsilon=1e-6):
+    """Scale each query's Gaussian bias by its raw key-key attention entropy.
+
+    ``attention_logits`` has shape [batch*heads, N+1, N+1] and is measured
+    before adding the Gaussian term. The CLS token is excluded from the
+    entropy calculation and the returned bias keeps the zero CLS row/column.
+    Diffuse patch queries receive the full local Gaussian; focused queries
+    receive proportionally less. Computation is kept in float32 for fp16 CLIP.
+    """
+    if not math.isfinite(epsilon) or epsilon <= 0:
+        raise ValueError('epsilon must be finite and positive')
+    if attention_logits.ndim != 3 or attention_logits.shape[-1] != attention_logits.shape[-2]:
+        raise ValueError('attention_logits must have shape [batch*heads, tokens, tokens]')
+    n_patches = attention_logits.shape[-1] - 1
+    if n_patches < 2:
+        raise ValueError('entropy-guided bias requires at least two image patches')
+
+    patch_logits = attention_logits[:, 1:, 1:].float()
+    probabilities = torch.softmax(patch_logits, dim=-1)
+    entropy = -(probabilities * probabilities.clamp_min(epsilon).log()).sum(dim=-1)
+    normalized_entropy = (entropy / math.log(n_patches)).clamp_(0.0, 1.0)
+
+    bias = gaussian.expand(attention_logits.shape[0], -1, -1).clone()
+    bias[:, 1:, 1:] *= normalized_entropy.unsqueeze(-1).to(bias.dtype)
+    return bias

@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--work-dir', required=True, type=Path)
     parser.add_argument('--subset-size', type=int, default=32)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--condition', choices=['fixed', 'guided', 'none', 'upstream'], default='fixed',
+    parser.add_argument('--condition', choices=['fixed', 'guided', 'entropy', 'none', 'upstream'], default='fixed',
                         help='Proposal conditions disable PAMR; upstream retains original PAMR defaults')
     parser.add_argument('--guidance-tau', type=float)
     parser.add_argument('--guidance-temperature', type=float)
@@ -145,6 +145,7 @@ def main():
                     boundary_definition='both sides of valid horizontal/vertical class transitions; Euclidean distance <= 3 px on original annotation grid; ignore=255; pooled pixel accuracy in percent',
                     interior_definition='valid pixels outside the same 3-pixel boundary band',
                     guidance_feature_source='raw penultimate visual block output before final-block layer norm; excludes CLS',
+                    spatial_bias_rule=('per-query normalized entropy of pre-bias key-key attention; excludes CLS; scales the Gaussian' if args.condition == 'entropy' else None),
                     window_calibration=args.window_calibration,
                     window_calibration_strength=args.window_calibration_strength,
                     window_confidence_power=args.window_confidence_power,
@@ -213,13 +214,15 @@ def main():
                                       pamr_steps=model.pamr.num_iter if model.pamr is not None else 0,
                                       pamr_dilations=list(model.pamr.aff_m.dilations) if model.pamr is not None else [],
                                       spatial_bias=model.net.visual.spatial_bias,
+                                      spatial_bias_rule=('per-query normalized entropy of pre-bias key-key attention; excludes CLS; scales the Gaussian' if model.net.visual.spatial_bias == 'entropy' else None),
                                       guidance_tau=model.net.visual.guidance_tau,
                                       guidance_temperature=model.net.visual.guidance_temperature,
                                       guidance_epsilon=model.net.visual.guidance_epsilon,
                                       window_calibration=model.window_calibration,
                                       window_calibration_strength=model.window_calibration_strength,
                                       window_confidence_power=model.window_confidence_power,
-                                      patch_phase_ensemble=model.patch_phase_ensemble)
+                                      patch_phase_ensemble=model.patch_phase_ensemble,
+                                      patch_phase_offsets_px=list(model.patch_phase_offsets))
     write_json(args.work_dir / 'manifest.json', manifest)
     write_json(args.work_dir / 'classes.json', runner.test_dataloader.dataset.metainfo['classes'])
     torch.cuda.reset_peak_memory_stats()

@@ -63,6 +63,16 @@ class NACLIP(BaseSegmentor):
         if patch_phase_ensemble not in {'off', 'two', 'four'}:
             raise ValueError("patch_phase_ensemble must be one of: 'off', 'two', 'four'")
         self.patch_phase_ensemble = patch_phase_ensemble
+        if patch_phase_ensemble == 'off':
+            self.patch_phase_offsets = ((0, 0),)
+        else:
+            patch_size = getattr(self.net.visual, 'patch_size', None)
+            if not isinstance(patch_size, int) or patch_size < 2:
+                raise ValueError('Patch phase ensemble requires a ViT visual encoder with patch size >= 2')
+            half_phase = patch_size // 2
+            self.patch_phase_offsets = (
+                ((0, 0), (half_phase, half_phase)) if patch_phase_ensemble == 'two' else
+                ((0, 0), (half_phase, 0), (0, half_phase), (half_phase, half_phase)))
         self.align_corners = False
         self.pamr = PAMR(pamr_steps, dilations=pamr_stride).to(device) if pamr_steps > 0 else None
 
@@ -168,27 +178,35 @@ class NACLIP(BaseSegmentor):
             return (self.forward_slide(img, self.slide_stride, self.slide_crop)
                     if self.slide_crop > 0 else self.forward_feature(img))
 
-        patch_size = self.net.visual.patch_size
-        half_phase = patch_size // 2
-        if half_phase < 1:
-            raise ValueError('Patch phase ensemble requires a visual patch size of at least 2')
-        offsets = [(0, 0), (half_phase, half_phase)]
-        if self.patch_phase_ensemble == 'four':
-            offsets = [(0, 0), (half_phase, 0), (0, half_phase), (half_phase, half_phase)]
-
         height, width = img.shape[-2:]
         phase_logits = []
-        for dx, dy in offsets:
+        for dx, dy in self.patch_phase_offsets:
             if dx == 0 and dy == 0:
                 phase_logits.append(
                     self.forward_slide(img, self.slide_stride, self.slide_crop)
                     if self.slide_crop > 0 else self.forward_feature(img))
                 continue
 
-            # Shift image content right/down so the ViT patch grid sees another
-            # phase. Reflection padding avoids introducing a constant border.
-            pad_mode = 'reflect' if width > dx and height > dy else 'replicate'
-            shifted = nn.functional.pad(img, (dx, 0, dy, 0), mode=pad_mode)
+            # Shift content right/down. Extend the far edges so the final crop
+            # also starts on the same regular stride grid as all earlier crops.
+            if self.slide_crop > 0:
+                crop_h, crop_w = ((self.slide_crop, self.slide_crop)
+                                  if isinstance(self.slide_crop, int) else self.slide_crop)
+                stride_h, stride_w = ((self.slide_stride, self.slide_stride)
+                                      if isinstance(self.slide_stride, int) else self.slide_stride)
+                target_h = (math.ceil(max(height + dy - crop_h, 0) / stride_h) * stride_h
+                            + crop_h)
+                target_w = (math.ceil(max(width + dx - crop_w, 0) / stride_w) * stride_w
+                            + crop_w)
+            else:
+                patch_size = self.net.visual.patch_size
+                target_h = math.ceil((height + dy) / patch_size) * patch_size
+                target_w = math.ceil((width + dx) / patch_size) * patch_size
+            pad_right = target_w - width - dx
+            pad_bottom = target_h - height - dy
+            padding = (dx, pad_right, dy, pad_bottom)
+            can_reflect = (max(dx, pad_right) < width and max(dy, pad_bottom) < height)
+            shifted = nn.functional.pad(img, padding, mode='reflect' if can_reflect else 'replicate')
             shifted_logits = (self.forward_slide(shifted, self.slide_stride, self.slide_crop)
                               if self.slide_crop > 0 else self.forward_feature(shifted))
             phase_logits.append(shifted_logits[:, :, dy:dy + height, dx:dx + width])

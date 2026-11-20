@@ -154,6 +154,8 @@ The underlying model default outside this runner remains unchanged.
 
 The experimental overlap-calibration mode is off by default. Use `--window-calibration disagreement` to enable it (strength 0.5, confidence power 1.0); compare it on the same seed and subset with PAMR disabled. The ADE20K paired-pilot cell in `colab_naclip.ipynb` runs standard and calibrated modes on identical selected image IDs and records both summaries.
 
+The patch-grid phase ensemble is also off by default. Set `--patch-phase-ensemble two` to average the canonical image grid with one diagonal half-patch shift, or `four` to use all horizontal/vertical half-patch combinations. It increases encoder work by two or four phases. The notebook's **ADE20K patch-phase pilot** cell compares `off` and `two` on the same seeded 32-image subset with fixed Gaussian bias and PAMR disabled.
+
 All conditions report overall mIoU plus boundary and interior accuracy. The
 boundary band uses both sides of valid horizontal/vertical label transitions,
 Euclidean distance <= 3 pixels on the original annotation grid, and excludes
@@ -184,6 +186,10 @@ The implementation uses raw penultimate-block features before the final-block
 layer norm, excludes CLS from cosine similarity, computes similarity in float32,
 and shares each image's gate across attention heads. Only the fixed Gaussian is
 cached; the content-dependent gate is recomputed on each forward pass.
+
+For example, add `--patch-phase-ensemble two` to a fixed-subset command to run
+the two-phase variant. The runner records the phase mode in `manifest.json` and
+`summary.json` so it can be compared with a matched single-phase run.
 
 Run `--condition none` for key-key attention without spatial bias. Give every
 condition a new, empty work directory and use the same seed/subset selection.

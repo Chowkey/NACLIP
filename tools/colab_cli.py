@@ -127,7 +127,7 @@ def main():
     parser.add_argument('--stage', choices=['subset', 'full'])
     parser.add_argument('--subset-size', type=int, default=32)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--condition', choices=['fixed', 'guided', 'none', 'upstream'], default='fixed')
+    parser.add_argument('--condition', choices=['fixed', 'guided', 'entropy', 'none', 'upstream'], default='fixed')
     parser.add_argument('--guidance-tau', type=float)
     parser.add_argument('--guidance-temperature', type=float)
     parser.add_argument('--guidance-epsilon', type=float, default=1e-6)
