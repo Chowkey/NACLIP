@@ -1,6 +1,21 @@
 # Proposal experiment results
 
-Recorded on 2026-11-16 (Asia/Ho_Chi_Minh).
+## ADE20K guided full-validation run
+
+On 2026-11-18, the feature-guided condition completed all 2,000 ADE20K validation images on a Tesla T4. The run used seed 42, $\tau=0.33$, temperature $0.10$, PAMR disabled, and standard sliding-window merging. The run log reports `baseline_valid=true` and `proposal_protocol=true`.
+
+| Metric | Guided, PAMR off |
+| --- | ---: |
+| mIoU (%) | 17.23 |
+| Overall pixel accuracy (%) | 44.94 |
+| Mean class accuracy (%) | 39.02 |
+| Boundary accuracy (%) | 25.4498 |
+| Interior accuracy (%) | 47.1734 |
+| Evaluation wall time | 61 min 6.47 sec |
+
+The matched full-validation fixed Gaussian and no-spatial-bias conditions are still unverified. The guided score alone gives no estimate of the change in boundary accuracy relative to the fixed Gaussian baseline.
+
+Source: the pasted run log and its `BASELINE_SUMMARY`. The log reports the run directory as `/content/drive/MyDrive/NACLIP-results/guided/ade20k_guided_full_tau0p33_temp0p10_20261118T055542868887Z`, with an adjacent Markdown report and log on Drive.
 
 ## ADE20K overlap-calibration paired pilot
 
