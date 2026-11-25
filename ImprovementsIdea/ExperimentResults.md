@@ -1,32 +1,48 @@
 # Proposal experiment results
 
-Initially recorded on 2026-11-16 (Asia/Ho_Chi_Minh); updated on 2026-11-20.
+Initially recorded on 2026-11-16 (Asia/Ho_Chi_Minh); updated on 2026-11-25.
 
-## ADE20K overlap-calibration paired pilot
+## ADE20K overlap-calibration paired full validation
 
-On a matched 32-image ADE20K subset (seed 42), overlap-aware window calibration produced nearly unchanged scores relative to standard sliding-window merging. Both conditions completed all images and used the same image IDs. PAMR was disabled; guided spatial bias used $\tau=0.33$ and temperature $0.10$ in both conditions.
-
-| Metric | Standard merge | Overlap calibration | Calibrated minus standard |
-| --- | ---: | ---: | ---: |
-| mIoU (%) | 13.73 | 13.72 | -0.01 |
-| Boundary accuracy (%) | 27.6264 | 27.6353 | +0.0089 |
-| Interior accuracy (%) | 51.8792 | 51.8740 | -0.0052 |
-
-This pilot shows no material change in these aggregate metrics; the tiny boundary increase alone is not evidence of a reliable gain. It is a subset result and does not establish full-validation performance. Run directory on Drive: `/content/drive/MyDrive/NACLIP-results/window-calibration/ade20k_paired_seed42_20261118T073454609223Z`.
-
-## PC59 overlap-calibration paired pilot
-
-On a matched 32-image PC59 validation subset (seed 42), overlap-disagreement calibration made almost no change relative to standard sliding-window merging. Both runs used guided spatial bias ($\tau=0.33$, temperature $0.10$), PAMR off, and the same image IDs; both summaries were valid.
+On the full ADE20K validation set, overlap-disagreement calibration produced nearly unchanged aggregate scores relative to standard sliding-window merging. Both conditions evaluated the same 2,000 image IDs (seed 42), with guided spatial bias ($\tau=0.33$, temperature $0.10$) and PAMR disabled. Both summaries were valid and reported no PAMR failures.
 
 | Metric | Standard merge | Overlap calibration | Calibrated minus standard |
 | --- | ---: | ---: | ---: |
-| mIoU (%) | 27.37 | 27.36 | -0.01 |
-| Overall pixel accuracy (%) | 57.53 | 57.53 | 0.00 |
-| Mean class accuracy (%) | 57.88 | 57.84 | -0.04 |
-| Boundary accuracy (%) | 38.6925 | 38.7147 | +0.0222 |
-| Interior accuracy (%) | 59.6326 | 59.6344 | +0.0018 |
+| mIoU (%) | 17.23 | 17.23 | 0.00 |
+| Overall pixel accuracy (%) | 44.94 | 44.94 | 0.00 |
+| Mean class accuracy (%) | 39.02 | 39.05 | +0.03 |
+| Boundary accuracy (%) | 25.4515 | 25.4599 | +0.0085 |
+| Interior accuracy (%) | 47.1732 | 47.1698 | -0.0034 |
 
-The tiny boundary increase is not evidence of a reliable gain; aggregate metrics are effectively unchanged in this pilot. The observed runner times were 45.06 seconds for standard merge and 6.75 seconds for calibration, but the runs were sequential and the second may benefit from warm data/cache state, so this is not a controlled speed comparison. Run directory on Drive: `/content/drive/MyDrive/NACLIP-results/window-calibration/pc59_paired_seed42_20261119T141553841782Z`.
+Calibration changed the aggregate metrics only slightly in this full validation. The sequential run times (3,655.22 seconds standard; 297.30 seconds calibrated) are not a controlled speed comparison and should not be interpreted as an algorithmic speedup; run order, initialization, and cache state can affect wall time. Run directory on Drive: `/content/drive/MyDrive/NACLIP-results/window-calibration/ade20k_full_paired_seed42_20261125T034551682272Z`.
+
+## PC59 overlap-calibration paired full validation
+
+On all 5,105 PC59 validation images, overlap-disagreement calibration produced only small aggregate metric changes relative to standard sliding-window merging. Both conditions used the same image IDs (seed 42), guided spatial bias ($\tau=0.33$, temperature $0.10$), and PAMR disabled. Both summaries were valid and reported no PAMR failures.
+
+| Metric | Standard merge | Overlap calibration | Calibrated minus standard |
+| --- | ---: | ---: | ---: |
+| mIoU (%) | 34.86 | 34.86 | 0.00 |
+| Overall pixel accuracy (%) | 59.06 | 59.07 | +0.01 |
+| Mean class accuracy (%) | 57.59 | 57.62 | +0.03 |
+| Boundary accuracy (%) | 36.2619 | 36.2765 | +0.0147 |
+| Interior accuracy (%) | 61.4405 | 61.4482 | +0.0077 |
+
+These small differences do not establish a reliable improvement. The sequential run times (8,683.64 seconds standard; 615.60 seconds calibrated) are not a controlled speed comparison and should not be interpreted as an algorithmic speedup; run order, initialization, and cache state can affect wall time. Run directory on Drive: `/content/drive/MyDrive/NACLIP-results/window-calibration/pc59_full_paired_seed42_20261125T045238012722Z`.
+
+## PC59 entropy-adaptive paired full validation
+
+Fixed Gaussian and entropy-adaptive Gaussian were evaluated on all 5,105 PC59 validation images with identical image IDs (seed 42) and PAMR disabled. Both summaries were valid. Entropy-adaptive bias improved mIoU by 0.10 points and boundary/interior accuracy by 0.0431/0.0643 points, while mean class accuracy decreased by 0.04 points.
+
+| Metric | Fixed Gaussian | Entropy-adaptive Gaussian | Entropy minus fixed |
+| --- | ---: | ---: | ---: |
+| mIoU (%) | 35.19 | 35.29 | +0.10 |
+| Overall pixel accuracy (%) | 59.34 | 59.41 | +0.07 |
+| Mean class accuracy (%) | 57.74 | 57.70 | -0.04 |
+| Boundary accuracy (%) | 36.3860 | 36.4291 | +0.0431 |
+| Interior accuracy (%) | 61.7395 | 61.8038 | +0.0643 |
+
+Evaluation wall time was 537.92 seconds for fixed Gaussian and 551.90 seconds for entropy-adaptive Gaussian. These sequential timings are descriptive, not a controlled speed comparison. Run directory on Drive: `/content/drive/MyDrive/NACLIP-results/entropy-bias/entropy_full_pc59_seed42_20261125T072807995354Z/pc59`.
 
 ## PC59 matched full-validation comparison
 
@@ -56,7 +72,7 @@ This is the comparison that isolates the configured spatial-bias change: guided 
 - Both summaries: `baseline_valid=true`, `proposal_protocol=true`, no PAMR failures.
 - Verified downloaded manifests, source SHA-256 values against local code, identical image ID lists and package files, final progress, pixel ratios, and resolved configurations. The only configuration differences are the output directory, spatial-bias mode, and the inactive/active guidance threshold and temperature.
 
-Tau and temperature were selected before the guided evaluation from unlabeled feature distributions of 32 ADE20K and 32 PC59 validation images. They were not selected using segmentation accuracy. Calibration artifacts are under `NACLIP-results/guidance-distribution-20261115T162954Z`.
+Tau and temperature were selected before the full validations from unlabeled feature distributions, not segmentation accuracy. Calibration artifacts are under `NACLIP-results/guidance-distribution-20261115T162954Z`.
 
 ## Timing
 
@@ -75,6 +91,21 @@ Guided's mean timed processing was **3.16% higher**. This includes preprocessing
 For future speed comparisons, cache the same files under `/content` and use matched warm-up and loading conditions.
 
 ## Persistent run artifacts
+
+### ADE20K overlap-calibration paired full validation
+
+- Drive directory: `/content/drive/MyDrive/NACLIP-results/window-calibration/ade20k_full_paired_seed42_20261125T034551682272Z`.
+- Saved: `paired_comparison.json`; the `standard/` and `calibrated/` subdirectories contain each run's summary and image-ID list.
+
+### PC59 overlap-calibration paired full validation
+
+- Drive directory: `/content/drive/MyDrive/NACLIP-results/window-calibration/pc59_full_paired_seed42_20261125T045238012722Z`.
+- Saved: `paired_comparison.json`; the `standard/` and `calibrated/` subdirectories contain each run's summary and image-ID list.
+
+### PC59 entropy-adaptive paired full validation
+
+- Drive directory: `/content/drive/MyDrive/NACLIP-results/entropy-bias/entropy_full_pc59_seed42_20261125T072807995354Z/pc59`.
+- Saved: `paired_comparison.json`; the `fixed/` and `entropy/` subdirectories contain each run's summary and image-ID list.
 
 ### Fixed
 
